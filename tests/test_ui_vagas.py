@@ -27,6 +27,18 @@ class Busca(unittest.TestCase):
             self.assertEqual(r["vagas"][0]["empresa"], "Acme")
             self.assertEqual(r["vagas"][0]["link"], "https://x.test/1")
 
+    def test_le_grupos_e_ignora_descartadas(self):
+        with tempfile.TemporaryDirectory() as d:
+            ds = [{"titulo": "Ext", "empresa": "A", "link": "https://x.test/1", "data": "2026-01-02",
+                   "candidatura": "externa", "requisitos": "Go"},
+                  {"titulo": "Simp", "empresa": "B", "link": "https://x.test/2", "data": "2026-01-02"}]
+            fora = [{"titulo": "Velha", "empresa": "Z", "link": "https://x.test/9", "motivo": "duplicada"}]
+            (Path(d) / "2026-01-02-busca.md").write_text(b.render(ds, "2026-01-02", fora))
+            r = v.ultima_busca(d)
+            self.assertEqual([x["titulo"] for x in r["vagas"]], ["Simp", "Ext"])
+            self.assertEqual(r["vagas"][1]["link"], "https://x.test/1")
+            self.assertEqual(r["vagas"][1]["trecho"], "Go")
+
 
 class Triagem(unittest.TestCase):
     def test_ler_triagem(self):

@@ -1,6 +1,8 @@
 """Testes do /busca (scripts/busca.py). Fixtures fictícias em diretório temporário.
-Seams: build_queries(), processar() (dedup + exclusões) e a CLI (gate, arquivo gerado)."""
+Seams: janela_desde(), build_urls(), processar() (descartes), render() e a CLI (gate, arquivo)."""
 import json, subprocess, sys, tempfile, unittest
+from datetime import date
+from urllib.parse import parse_qs, urlsplit
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -9,44 +11,104 @@ import busca as b  # noqa: E402
 from test_validar_config import BUSCA_OK, EXC_OK  # noqa: E402
 
 
-def vaga(titulo="Dev Backend", empresa="Beta SA", link="https://www.linkedin.com/jobs/view/111", **kw):
-    return {"titulo": titulo, "empresa": empresa, "link": link,
-            "trecho": "Vaga remota", "data": "2026-11-01", **kw}
+def vaga(titulo="Dev Backend", empresa="Beta SA", link="https://www.linkedin.com/jobs/view/4487014884/", **kw):
+    return {"titulo": titulo, "empresa": empresa, "link": link, "local": "Brasil (remoto)",
+            "candidatura": "simplificada", "status": "aberta",
+            "requisitos": "Vaga remota", "data": "2026-11-05", **kw}
 
 
-class Queries(unittest.TestCase):
-    def test_so_cargo_local_regime(self):
-        qs = b.build_queries({"cargos_alvo": ["Engenheiro de Software Backend"], "regime": "remoto",
-                              "paises_fuso": ["Brasil"], "faixa_salarial_minima": "9000",
-                              "stack_desejada": ["Python"], "deal_breakers": ["Plantão 24h"]})
-        self.assertEqual(qs, ['Engenheiro de Software Backend remoto Brasil site:linkedin.com/jobs'])
-        for q in qs:
-            for proibido in ("9000", "Python", "Plantão"):
-                self.assertNotIn(proibido, q)
+HOJE, DESDE = date(2026, 11, 8), date(2026, 11, 1)
+CFG = {"cargos_alvo": ["Engenheiro de Software Backend"], "regime": "remoto",
+       "paises_fuso": ["Brasil", "EUA"], "faixa_salarial_minima": "9000",
+       "stack_desejada": ["Python"], "deal_breakers": ["Plantão 24h"]}
+
+
+class Urls(unittest.TestCase):
+    def test_so_cargo_local_regime_e_janela(self):
+        us = b.build_urls(CFG, DESDE, HOJE)
+        self.assertEqual(len(us), 2)
+        q = parse_qs(urlsplit(us[0]).query)
+        self.assertEqual(q["keywords"], ["Engenheiro de Software Backend"])
+        self.assertEqual(q["location"], ["Brazil"])
+        self.assertEqual(q["f_WT"], ["2"])
+        self.assertEqual(q["f_TPR"], [f"r{8 * 86400}"])
+        self.assertEqual(parse_qs(urlsplit(us[1]).query)["location"], ["United States"])
+        self.assertEqual(set(q) - {"keywords", "location", "f_WT", "f_TPR", "sortBy"}, set())
+        for u in us:
+            for proibido in ("9000", "Python", "Plant"):
+                self.assertNotIn(proibido, u)
+
+    def test_janela_desde_ultima_busca_anterior(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(b.janela_desde(d, HOJE), date(2026, 11, 1))
+            for n in ("2026-11-03-busca.md", "2026-11-05-busca.md", "2026-11-08-busca.md"):
+                (Path(d) / n).write_text("")
+            self.assertEqual(b.janela_desde(d, HOJE), date(2026, 11, 5))
+
+    def test_janela_tem_teto_de_30_dias(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "2026-01-01-busca.md").write_text("")
+            self.assertEqual(b.janela_desde(d, HOJE), date(2026, 10, 9))
 
 
 class Processar(unittest.TestCase):
-    def test_remove_duplicata_por_link_ignorando_query_string(self):
-        a = vaga(link="https://www.linkedin.com/jobs/view/111?trk=abc")
-        c = vaga(titulo="Outro", empresa="Gama", link="https://www.linkedin.com/jobs/view/111/")
-        self.assertEqual(len(b.processar([a, c], "")), 1)
+    def motivos(self, vagas, exc="", **kw):
+        return [d["motivo"] for d in b.processar(vagas, exc, **kw)[1]]
+
+    def test_remove_duplicata_pelo_id_do_linkedin(self):
+        a = vaga(link="https://br.linkedin.com/jobs/view/backend-at-beta-4487014884?trk=abc")
+        c = vaga(titulo="Outro", empresa="Gama", link="https://www.linkedin.com/jobs/view/4487014884/")
+        ok, fora = b.processar([a, c], "")
+        self.assertEqual(len(ok), 1)
+        self.assertEqual(fora[0]["motivo"], "duplicada")
 
     def test_remove_duplicata_por_titulo_e_empresa(self):
         a = vaga(link="https://x/1")
         c = vaga(titulo="  dev BACKEND ", empresa="beta sa", link="https://x/2")
-        self.assertEqual(len(b.processar([a, c], "")), 1)
+        self.assertEqual(len(b.processar([a, c], "")[0]), 1)
 
     def test_mantem_distintas(self):
         a, c = vaga(), vaga(titulo="Dev Python", link="https://x/2")
-        self.assertEqual(len(b.processar([a, c], "")), 2)
+        self.assertEqual(len(b.processar([a, c], "")[0]), 2)
 
     def test_exclui_empresa_de_vagas_excluidas(self):
-        r = b.processar([vaga(empresa="Acme Corp", link="https://x/3"), vaga()], EXC_OK)
-        self.assertEqual([v["empresa"] for v in r], ["Beta SA"])
+        ok, fora = b.processar([vaga(empresa="Acme Corp", link="https://x/3"), vaga()], EXC_OK)
+        self.assertEqual([v["empresa"] for v in ok], ["Beta SA"])
+        self.assertIn("vagas_excluidas", fora[0]["motivo"])
 
     def test_comentarios_nao_excluem(self):
-        r = b.processar([vaga(empresa="Beta SA")], "# Beta SA era exemplo\n")
-        self.assertEqual(len(r), 1)
+        self.assertEqual(len(b.processar([vaga(empresa="Beta SA")], "# Beta SA era exemplo\n")[0]), 1)
+
+    def test_descarta_sem_data(self):
+        self.assertIn("sem data", self.motivos([vaga(data="")])[0])
+
+    def test_descarta_antes_da_janela(self):
+        self.assertIn("antes de", self.motivos([vaga(data="2026-10-20")], desde=DESDE)[0])
+
+    def test_descarta_data_futura(self):
+        self.assertIn("inválida", self.motivos([vaga(data="2026-12-01")], hoje=HOJE)[0])
+
+    def test_descarta_encerrada(self):
+        self.assertIn("não aceita", self.motivos([vaga(status="encerrada")])[0])
+
+    def test_aceita_dentro_da_janela(self):
+        self.assertEqual(len(b.processar([vaga()], "", desde=DESDE, hoje=HOJE)[0]), 1)
+
+
+class Render(unittest.TestCase):
+    def test_grupos_com_numeracao_continua_e_descartadas(self):
+        vs = [vaga(titulo="Ext A", candidatura="externa", link="https://x/1"),
+              vaga(titulo="Simp B", link="https://x/2"),
+              vaga(titulo="Ext C", candidatura="externa", link="https://x/3")]
+        fora = [{"titulo": "Velha", "empresa": "Z", "link": "https://x/9", "motivo": "duplicada"}]
+        txt = b.render(vs, "2026-11-08", fora, DESDE)
+        self.assertLess(txt.index("Candidatura simplificada"), txt.index("Candidatura externa"))
+        self.assertIn("## 1. Simp B", txt)
+        self.assertIn("## 2. Ext A", txt)
+        self.assertIn("## 3. Ext C", txt)
+        self.assertIn("# Descartadas", txt)
+        self.assertIn("Velha | Z | duplicada", txt)
+        self.assertIn("desde 2026-11-01", txt)
 
 
 class Cli(unittest.TestCase):
@@ -56,7 +118,7 @@ class Cli(unittest.TestCase):
         self.exc = self.p / "exc.md"
         self.exc.write_text(EXC_OK)
         self.res = self.p / "res.json"
-        self.res.write_text(json.dumps([vaga(), vaga(link="https://www.linkedin.com/jobs/view/111?x=1"),
+        self.res.write_text(json.dumps([vaga(), vaga(link="https://www.linkedin.com/jobs/view/4487014884?x=1"),
                                         vaga(empresa="Acme Corp", link="https://x/9")]))
 
     def tearDown(self):
@@ -71,7 +133,7 @@ class Cli(unittest.TestCase):
 
     def test_recusa_com_placeholder(self):
         ex = (ROOT / "busca.example.yaml").read_text()
-        r = self.run_cli("queries", busca=ex)
+        r = self.run_cli("urls", busca=ex)
         self.assertEqual(r.returncode, 1)
         self.assertIn("exemplo", r.stderr.lower())
         out = self.p / "vagas"
@@ -82,12 +144,14 @@ class Cli(unittest.TestCase):
 
     def test_recusa_excluidas_com_placeholder(self):
         self.exc.write_text("- 2026-10-01 | Empresa A | presencial | x\n")
-        self.assertEqual(self.run_cli("queries").returncode, 1)
+        self.assertEqual(self.run_cli("urls").returncode, 1)
 
-    def test_queries_imprime_consulta(self):
-        r = self.run_cli("queries")
-        self.assertEqual(r.returncode, 0)
-        self.assertIn("Engenheiro de Software Backend remoto Brasil", r.stdout)
+    def test_urls_imprime_desde_e_url(self):
+        r = self.run_cli("urls", "--saida-dir", str(self.p / "vagas"), "--data", "2026-11-08")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        linhas = r.stdout.splitlines()
+        self.assertEqual(linhas[0], "desde 2026-11-01")
+        self.assertTrue(linhas[1].startswith("https://www.linkedin.com/jobs/search/?"))
         self.assertNotIn("Python", r.stdout)
 
     def test_gravar_gera_arquivo_sem_classificar(self):
@@ -95,14 +159,15 @@ class Cli(unittest.TestCase):
         r = self.run_cli("gravar", "--resultados", str(self.res), "--saida-dir", str(out),
                          "--data", "2026-11-08")
         self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("1 vaga(s)", r.stdout)
         txt = (out / "2026-11-08-busca.md").read_text()
-        self.assertIn("Dev Backend", txt)
-        self.assertIn("Beta SA", txt)
-        self.assertIn("https://www.linkedin.com/jobs/view/111", txt)
-        self.assertIn("Vaga remota", txt)
-        self.assertIn("2026-11-01", txt)
-        self.assertNotIn("Acme", txt)
-        self.assertEqual(txt.count("Dev Backend"), 1)
+        corpo = txt.split("# Descartadas")[0]
+        for esperado in ("Dev Backend", "Beta SA", "https://www.linkedin.com/jobs/view/4487014884/",
+                         "Vaga remota", "2026-11-05"):
+            self.assertIn(esperado, corpo)
+        self.assertNotIn("Acme", corpo)
+        self.assertEqual(corpo.count("## "), 1)
+        self.assertIn("Acme Corp", txt.split("# Descartadas")[1])
         for palavra in ("nota", "score", "aderência", "recomend"):
             self.assertNotIn(palavra, txt.lower())
 
