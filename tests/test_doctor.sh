@@ -12,7 +12,10 @@ PROJ="$TMP/proj"; mkdir -p "$PROJ"
 (cd "$ROOT" && git ls-files -co --exclude-standard | grep -v "^\.scratch" | rsync -a --files-from=- . "$PROJ/")
 FAKE="$TMP/bin"; mkdir -p "$FAKE"
 mkfake() { printf '#!/bin/sh\necho fake\n' > "$FAKE/$1"; chmod +x "$FAKE/$1"; }
-doctor() { (cd "$PROJ" && PATH="$FAKE:/usr/bin:/bin" make doctor 2>&1); }
+# PATH isolado: espelha /usr/bin sem pdflatex/claude reais (o ambiente pode ter LaTeX instalado)
+REAL="$TMP/realbin"; mkdir -p "$REAL"
+for f in /usr/bin/* /bin/*; do b="${f##*/}"; case "$b" in pdflatex|claude) ;; *) ln -sf "$f" "$REAL/$b" 2>/dev/null;; esac; done
+doctor() { (cd "$PROJ" && PATH="$FAKE:$REAL" make doctor 2>&1); }
 
 # Cenário 1: nada pronto (sem claude, pdflatex, private/)
 OUT="$(doctor)"; RC=$?

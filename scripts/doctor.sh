@@ -4,7 +4,7 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT" || exit 1
-# Pacotes TeX Live do template do upstream (lista a confirmar compilando o exemplo).
+# Pacotes TeX Live do template do upstream (lista confirmada: o exemplo compila com ela).
 APT_PKGS="texlive-latex-recommended texlive-latex-extra texlive-fonts-recommended texlive-fonts-extra texlive-lang-portuguese lmodern"
 EXAMPLE_DIR=vendor/meu-emprego-novo/meu-emprego-novo-pipeline/exemplo/curriculos/dados/v1
 BAD=0
