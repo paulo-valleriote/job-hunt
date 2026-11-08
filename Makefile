@@ -38,6 +38,10 @@ test-doctor:
 test-curriculo:
 	@python3 -m unittest tests.test_curriculo
 
+.PHONY: test-avaliador
+test-avaliador:
+	@python3 -m unittest tests.test_avaliador
+
 .PHONY: test-busca
 test-busca:
 	@python3 -m unittest tests.test_busca
