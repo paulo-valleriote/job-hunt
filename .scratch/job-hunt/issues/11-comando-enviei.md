@@ -4,11 +4,11 @@
 
 **Blocked by:** 02 (`make setup`)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Acrescenta uma linha ao `private/tracker.csv` respeitando o cabeçalho existente (`data,empresa,vaga,fonte,tipo,link,curriculo,status,proximo_passo,observacoes`)
-- [ ] Aponta o currículo usado, quando existir um gerado para a vaga
-- [ ] Não duplica linhas ao registrar a mesma vaga duas vezes
-- [ ] O CSV continua abrindo normalmente no Excel
-- [ ] Testes automatizados para escrita e deduplicação (dica: skill `tdd`)
-- [ ] Nunca envia nada em nome do usuário: só registra
+- [x] Acrescenta uma linha ao `private/tracker.csv` respeitando o cabeçalho existente (`data,empresa,vaga,fonte,tipo,link,curriculo,status,proximo_passo,observacoes`)
+- [x] Aponta o currículo usado, quando existir um gerado para a vaga
+- [x] Não duplica linhas ao registrar a mesma vaga duas vezes
+- [x] O CSV continua abrindo normalmente no Excel
+- [x] Testes automatizados para escrita e deduplicação (dica: skill `tdd`)
+- [x] Nunca envia nada em nome do usuário: só registra
