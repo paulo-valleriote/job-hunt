@@ -1,0 +1,24 @@
+# Dados pessoais e upstream
+private/
+vendor/
+# Segredos
+.env
+.env.*
+!.env.example
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+# Saídas geradas
+output/
+outputs/
+*.pdf
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+# Local
+.claude/settings.local.json
+.DS_Store
