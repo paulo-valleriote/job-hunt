@@ -20,3 +20,10 @@ test-triagem:
 .PHONY: test-busca
 test-busca:
 	@python3 -m unittest tests.test_busca
+
+.PHONY: ui test-ui
+ui:
+	@python3 -m streamlit run ui/app.py --server.address localhost --server.headless true
+
+test-ui:
+	@python3 -m unittest tests.test_ui_vagas
