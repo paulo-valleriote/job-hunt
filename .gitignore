@@ -22,3 +22,5 @@ outputs/
 # Local
 .claude/settings.local.json
 .DS_Store
+# Critérios reais do usuário (modelo: busca.example.yaml)
+busca.yaml

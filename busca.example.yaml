@@ -1,0 +1,34 @@
+# Modelo dos critérios de busca. NÃO preencha este arquivo:
+#   cp busca.example.yaml busca.yaml   (o busca.yaml é ignorado pelo git)
+# Troque todo valor "EXEMPLO ..." pelo seu. Campo vazio ou de exemplo
+# faz /busca e /triagem recusarem rodar (scripts/validar_config.py).
+# Formato aceito: "chave: valor" ou "chave:" seguido de itens "  - valor".
+
+# Cargos que você procura (um por linha).
+cargos_alvo:
+  - EXEMPLO Engenheiro de Software Backend
+
+# Nível: junior, pleno, senior, etc.
+senioridade: EXEMPLO pleno
+
+# Regime: remoto, híbrido ou presencial.
+regime: EXEMPLO remoto
+
+# Países e/ou fusos horários aceitos.
+paises_fuso:
+  - EXEMPLO Brasil
+
+# Salário mínimo mensal (número) e a moeda no comentário, se quiser.
+faixa_salarial_minima: EXEMPLO 0
+
+# Tecnologias desejadas.
+stack_desejada:
+  - EXEMPLO Python
+
+# Qualquer item aqui descarta a vaga.
+deal_breakers:
+  - EXEMPLO plantão 24h
+
+# Idiomas de vaga que você aceita (pt-BR, en...).
+idiomas_aceitos:
+  - EXEMPLO en
