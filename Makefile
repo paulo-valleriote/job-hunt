@@ -24,3 +24,7 @@ doctor:
 
 test-doctor:
 	@bash tests/test_doctor.sh
+
+.PHONY: test-curriculo
+test-curriculo:
+	@python3 -m unittest tests.test_curriculo
