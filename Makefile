@@ -36,3 +36,7 @@ test-avaliador:
 .PHONY: test-anti-invencao
 test-anti-invencao:
 	@python3 -m unittest tests.test_anti_invencao
+
+.PHONY: test-enviei
+test-enviei:
+	@python3 tests/test_enviei.py
