@@ -12,3 +12,7 @@ check-config:
 
 test-config:
 	@python3 -m unittest tests.test_validar_config
+
+.PHONY: test-busca
+test-busca:
+	@python3 -m unittest tests.test_busca
