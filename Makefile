@@ -32,3 +32,7 @@ test-curriculo:
 .PHONY: test-avaliador
 test-avaliador:
 	@python3 -m unittest tests.test_avaliador
+
+.PHONY: test-anti-invencao
+test-anti-invencao:
+	@python3 -m unittest tests.test_anti_invencao
