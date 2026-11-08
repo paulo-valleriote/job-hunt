@@ -4,10 +4,10 @@
 
 **Blocked by:** 01 (Esqueleto do projeto e guardrails)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Clona o upstream em `vendor/meu-emprego-novo/` sem modificá-lo (ignorado pelo git)
-- [ ] Cria o venv do projeto (com as dependências de glue, ex.: PyMuPDF) e a pasta `private/` com a estrutura prevista no `spec.md`
-- [ ] Copia uma única vez perfil, PDF, tracker e `vagas_excluidas.md` de `/mnt/e/busca-vagas/privado/`; os originais ficam intactos
-- [ ] Roda o `checar_privacidade.sh` do upstream e mostra o resultado
-- [ ] Reexecutável: não sobrescreve dados já copiados e informa o que fez e o que pulou
+- [x] Clona o upstream em `vendor/meu-emprego-novo/` sem modificá-lo (ignorado pelo git)
+- [x] Cria o venv do projeto (com as dependências de glue, ex.: PyMuPDF) e a pasta `private/` com a estrutura prevista no `spec.md`
+- [x] Copia uma única vez perfil, PDF, tracker e `vagas_excluidas.md` de `/mnt/e/busca-vagas/privado/`; os originais ficam intactos
+- [x] Roda o `checar_privacidade.sh` do upstream e mostra o resultado
+- [x] Reexecutável: não sobrescreve dados já copiados e informa o que fez e o que pulou
