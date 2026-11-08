@@ -1,6 +1,6 @@
 .PHONY: setup test doctor test-doctor check-config test-config \
 	test-busca test-triagem test-curriculo test-avaliador \
-	test-anti-invencao test-enviei ui test-ui
+	test-anti-invencao test-enviei ui test-ui test-ui-curriculos
 
 setup:
 	@bash scripts/setup.sh
@@ -44,6 +44,5 @@ ui:
 test-ui:
 	@python3 -m unittest tests.test_ui_vagas
 
-.PHONY: test-ui-curriculos
 test-ui-curriculos:
 	@python3 -m unittest tests.test_ui_curriculos
