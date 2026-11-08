@@ -16,3 +16,7 @@ test-config:
 .PHONY: test-triagem
 test-triagem:
 	@python3 -m unittest tests.test_triagem
+
+.PHONY: test-busca
+test-busca:
+	@python3 -m unittest tests.test_busca
