@@ -51,3 +51,7 @@ ui:
 
 test-ui:
 	@python3 -m unittest tests.test_ui_vagas
+
+.PHONY: test-ui-curriculos
+test-ui-curriculos:
+	@python3 -m unittest tests.test_ui_curriculos
