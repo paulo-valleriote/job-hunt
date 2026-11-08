@@ -1,63 +1,45 @@
-.PHONY: setup
+.PHONY: setup test doctor test-doctor check-config test-config \
+	test-busca test-triagem test-curriculo test-avaliador \
+	test-anti-invencao test-enviei ui test-ui
+
 setup:
 	@bash scripts/setup.sh
 
-.PHONY: test
 test:
 	@bash tests/test_setup.sh
 
-.PHONY: doctor
 doctor:
 	@bash scripts/doctor.sh
 
-.PHONY: test-doctor
 test-doctor:
 	@bash tests/test_doctor.sh
 
-.PHONY: check-config
 check-config:
 	@python3 scripts/validar_config.py
 
-.PHONY: test-config
 test-config:
 	@python3 -m unittest tests.test_validar_config
 
-.PHONY: test-triagem
+test-busca:
+	@python3 -m unittest tests.test_busca
+
 test-triagem:
 	@python3 -m unittest tests.test_triagem
 
-.PHONY: doctor
-doctor:
-	@bash scripts/doctor.sh
-
-.PHONY: test-doctor
-test-doctor:
-	@bash tests/test_doctor.sh
-
-.PHONY: test-curriculo
 test-curriculo:
 	@python3 -m unittest tests.test_curriculo
 
-.PHONY: test-avaliador
 test-avaliador:
 	@python3 -m unittest tests.test_avaliador
 
-.PHONY: test-busca
-test-busca:
-	@python3 -m unittest tests.test_busca
+test-anti-invencao:
+	@python3 -m unittest tests.test_anti_invencao
 
-.PHONY: ui
+test-enviei:
+	@python3 tests/test_enviei.py
+
 ui:
 	@python3 -m streamlit run ui/app.py --server.address localhost --server.headless true
 
-.PHONY: test-ui
 test-ui:
 	@python3 -m unittest tests.test_ui_vagas
-  
-.PHONY: test-busca
-test-busca:
-	@python3 -m unittest tests.test_busca
-  
-.PHONY: test-enviei
-test-enviei:
-	@python3 tests/test_enviei.py
