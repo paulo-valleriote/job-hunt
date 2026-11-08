@@ -25,6 +25,18 @@ test-config:
 .PHONY: test-triagem
 test-triagem:
 	@python3 -m unittest tests.test_triagem
+
+.PHONY: test-busca
+test-busca:
+	@python3 -m unittest tests.test_busca
+
+.PHONY: ui
+ui:
+	@python3 -m streamlit run ui/app.py --server.address localhost --server.headless true
+
+.PHONY: test-ui
+test-ui:
+	@python3 -m unittest tests.test_ui_vagas
   
 .PHONY: test-busca
 test-busca:
