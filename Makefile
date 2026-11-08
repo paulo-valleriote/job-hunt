@@ -26,6 +26,18 @@ test-config:
 test-triagem:
 	@python3 -m unittest tests.test_triagem
 
+.PHONY: doctor
+doctor:
+	@bash scripts/doctor.sh
+
+.PHONY: test-doctor
+test-doctor:
+	@bash tests/test_doctor.sh
+
+.PHONY: test-curriculo
+test-curriculo:
+	@python3 -m unittest tests.test_curriculo
+
 .PHONY: test-busca
 test-busca:
 	@python3 -m unittest tests.test_busca
