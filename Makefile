@@ -6,6 +6,14 @@ setup:
 test:
 	@bash tests/test_setup.sh
 
+.PHONY: doctor
+doctor:
+	@bash scripts/doctor.sh
+
+.PHONY: test-doctor
+test-doctor:
+	@bash tests/test_doctor.sh
+
 .PHONY: check-config
 check-config:
 	@python3 scripts/validar_config.py
