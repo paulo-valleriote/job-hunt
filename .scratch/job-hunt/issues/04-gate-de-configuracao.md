@@ -4,9 +4,9 @@
 
 **Blocked by:** 02 (`make setup`)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `busca.yaml` modelo e documentado com: cargos-alvo, senioridade, regime (remoto/híbrido), países/fuso, faixa salarial mínima, stack desejada, deal-breakers, idiomas aceitos
-- [ ] Um validador único detecta placeholders ("Empresa A", "Recrutadora C", "AAAA-MM-DD", modalidade sem cidade) em `vagas_excluidas.md` e campos vazios ou de exemplo em `busca.yaml`
-- [ ] Ao encontrar problema, recusa rodar com mensagem clara apontando arquivo e linha
-- [ ] Testes automatizados cobrem os casos de placeholder e de configuração válida (dica: skill `tdd`)
+- [x] `busca.yaml` modelo e documentado com: cargos-alvo, senioridade, regime (remoto/híbrido), países/fuso, faixa salarial mínima, stack desejada, deal-breakers, idiomas aceitos
+- [x] Um validador único detecta placeholders ("Empresa A", "Recrutadora C", "AAAA-MM-DD", modalidade sem cidade) em `vagas_excluidas.md` e campos vazios ou de exemplo em `busca.yaml`
+- [x] Ao encontrar problema, recusa rodar com mensagem clara apontando arquivo e linha
+- [x] Testes automatizados cobrem os casos de placeholder e de configuração válida (dica: skill `tdd`)
