@@ -16,3 +16,11 @@ test-config:
 .PHONY: test-triagem
 test-triagem:
 	@python3 -m unittest tests.test_triagem
+
+.PHONY: doctor test-doctor
+
+doctor:
+	@bash scripts/doctor.sh
+
+test-doctor:
+	@bash tests/test_doctor.sh
