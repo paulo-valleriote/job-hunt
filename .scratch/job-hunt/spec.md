@@ -25,7 +25,7 @@ Montar, por cima do repositório [R238Company/meu-emprego-novo](https://github.c
 | Dados | Copiar **uma vez** de `/mnt/e/busca-vagas/privado/` para `private/` (gitignored). Depois ignorar o `/mnt/e`; **não apagar nada de lá**. |
 | Backup | **Nenhum.** Dados só no WSL. O usuário foi avisado: o `private/` será a única cópia do que for gerado depois. |
 | PDFs | Ficam só no WSL (`private/`). Sem cópia para pastas do Windows. |
-| Busca | WebSearch do Claude Code com consultas ao LinkedIn, 10 a 20 vagas por rodada, salvas **sem classificar**. Sem scraping direto, sem login no LinkedIn. |
+| Busca | Navegador (Claude in Chrome) no LinkedIn, com login feito pelo próprio usuário e filtros de data e regime; cada vaga é aberta e verificada. 10 a 20 vagas por rodada, salvas **sem classificar**. Sem scraping por script. (Ticket 15 substituiu o WebSearch, que trazia vagas velhas e encerradas.) |
 | Triagem | O usuário escolhe a vaga e envia link ou texto. **Se o link não abrir, ele cola o texto** (nada de achar a vaga em outro site). |
 | Idioma do currículo | Detectado pela vaga; o usuário pode forçar. Foco em **EN**, também PT. |
 | LaTeX | **Completo** (`pdflatex`). Hoje **não está instalado**; o usuário roda o `sudo apt install` com `! comando`. |
@@ -48,7 +48,7 @@ Regras do usuário (copiar como estão):
 
 Regras novas:
 
-7. Consultas de WebSearch **não** podem conter dados pessoais: só cargo, local e regime.
+7. Consultas externas (WebSearch, URLs de busca no navegador) **não** podem conter dados pessoais: só cargo, local e regime.
 8. Ciclo de revisão: avaliador separado de quem escreve; nota-alvo 8.5; máximo 3 revisões; parar se não melhorar; entregar a de melhor nota.
 9. Checagem anti-invenção sempre ligada em `/curriculo`.
 10. Nada de `private/` em commits, logs compartilhados ou consultas externas.
