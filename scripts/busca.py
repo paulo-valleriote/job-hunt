@@ -6,7 +6,8 @@ chrome-devtools, com login do usuário); este script só faz a parte determinís
   urls     imprime a data "desde" e as URLs de busca (só cargo, local, regime e janela de data)
   filtros  lista os filtros que o LinkedIn aplicou além do pedido, a partir da URL final
   candidatos  da listagem de todas as URLs, escolhe em rodízio quem será aberto e verificado
-  gravar   lê JSON de candidatos, descarta inválidas/excluídas/duplicadas e grava AAAA-MM-DD-busca.md
+  gravar   lê JSON das vagas verificadas, valida o contrato, aplica as regras de processar() e grava
+           AAAA-MM-DD-busca.md (as regras de descarte estão documentadas só em processar())
 """
 import argparse, json, re, sys
 from datetime import date, timedelta
@@ -30,6 +31,7 @@ LOCAIS = {"brasil": "Brazil", "eua": "United States", "estados unidos": "United 
           "latam": "Latin America", "américa latina": "Latin America", "mundo": "Worldwide"}
 # O LinkedIn descarta "location=" e usa a localidade da conta; o geoId fixa o país. Só entram
 # os códigos verificados no navegador (outros países seguem só com location).
+# Receita para achar e confirmar um código novo: docs/agents/busca-geoid.md
 GEO_IDS = {"Brazil": "106057199", "United States": "103644278", "United Kingdom": "101165590",
            "Latin America": "91000011"}
 ELEGIVEL = ("brasil", "latam", "mundo")  # onde a vaga remota aceita candidatos
