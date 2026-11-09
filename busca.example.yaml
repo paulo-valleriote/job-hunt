@@ -6,6 +6,7 @@
 
 # Quem usa cada campo:
 #   - cargos_alvo, regime e paises_fuso montam as URLs de busca do /busca (cargo x país).
+#   - titulos_excluidos (opcional) descarta a vaga pelo título, antes da verificação.
 #   - senioridade, stack_desejada e deal_breakers NÃO filtram a busca: o /busca não os lê.
 #     Quem os lê é o /triagem, como contexto para a nota e para avisar de deal breaker.
 
@@ -17,6 +18,18 @@ cargos_alvo:
 # Nível: junior, pleno, senior, etc. É texto livre lido só pelo /triagem; diga também como
 # tratar o nível acima do seu (ex.: "aceito mid-senior só com match alto; senior recebe nota baixa").
 senioridade: EXEMPLO pleno
+
+# Termos de nível que descartam a vaga pelo título (opcional; ausente ou vazio = não filtra).
+# Casa palavra inteira, sem diferença de caixa ou acento: "Lead" pega "Tech Lead", não "Leadership".
+# O /busca tira esses cargos antes de abrir a página de cada vaga e, no fim, lista em
+# "Descartadas" o que passou. Deixe "Senior" de fora para ainda ver essas vagas e decidir
+# (quem trata o nível é o /triagem, pela senioridade acima).
+titulos_excluidos:
+  - Staff
+  - Principal
+  - Lead
+  - Head
+  - Director
 
 # Regime: remoto, híbrido ou presencial.
 regime: EXEMPLO remoto

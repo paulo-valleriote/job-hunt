@@ -5,11 +5,12 @@ A coleta em si é feita pelo Claude no navegador (Chromium do WSL com porta de d
 chrome-devtools, com login do usuário); este script só faz a parte determinística. Subcomandos (todos passam antes por validar_config):
   urls     imprime a data "desde" e as URLs de busca (só cargo, local, regime e janela de data)
   filtros  lista os filtros que o LinkedIn aplicou além do pedido, a partir da URL final
-  candidatos  da listagem de todas as URLs, escolhe em rodízio quem será aberto e verificado
+  candidatos  da listagem de todas as URLs, tira os de nível acima (titulos_excluidos) e escolhe
+              em rodízio quem será aberto e verificado
   gravar   lê JSON das vagas verificadas, valida o contrato, aplica as regras de processar() e grava
            AAAA-MM-DD-busca.md (as regras de descarte estão documentadas só em processar())
 """
-import argparse, json, re, sys
+import argparse, json, re, sys, unicodedata
 from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -66,6 +67,12 @@ def parse_busca(text):
     return out
 
 
+def titulos_excluidos(cfg):
+    """Campo opcional do busca.yaml; ausente ou vazio = não filtra. Aceita um valor só ou lista."""
+    v = cfg.get("titulos_excluidos") or []
+    return [v] if isinstance(v, str) else v
+
+
 def janela_desde(saida_dir, hoje):
     """Publicadas desde a última busca (mesmo dia inclusive); sem busca anterior, 7 dias; teto 30."""
     datas = []
@@ -103,6 +110,21 @@ def _norm(s):
     return re.sub(r"\s+", " ", (s or "").strip().lower())
 
 
+def _sem_acento(s):
+    return "".join(c for c in unicodedata.normalize("NFD", _norm(s)) if not unicodedata.combining(c))
+
+
+def termo_no_titulo(titulo, termos):
+    """Primeiro termo de `termos` que aparece no título como palavra inteira, sem acento e sem
+    diferença de caixa (ex.: "Lead" casa "Tech Lead", não "Leadership"); None se nenhum."""
+    t = _sem_acento(titulo)
+    for termo in termos or ():
+        n = _sem_acento(termo)
+        if n and re.search(rf"(?<!\w){re.escape(n)}(?!\w)", t):
+            return termo
+    return None
+
+
 def _link_key(link):
     m = re.search(r"/jobs/view/(?:[^/?#]*-)?(\d{6,})", link or "")
     if m:
@@ -122,11 +144,13 @@ def _data(v):
         return None
 
 
-def processar(vagas, excluidas_text, desde=None, hoje=None, remoto=False, maximo=None):
+def processar(vagas, excluidas_text, desde=None, hoje=None, remoto=False, maximo=None,
+              titulos_excluidos=()):
     """Devolve (aceitas, descartadas). Descartada = {titulo, empresa, link, motivo}.
     remoto=True (regime remoto): exige modalidade remota verificada e que a vaga aceite candidatos
     do Brasil, da LATAM ou de qualquer lugar (campos "modalidade" e "elegibilidade").
-    maximo: teto de vagas aceitas; as que passam das regras além dele são cortadas na ordem de coleta."""
+    maximo: teto de vagas aceitas; as que passam das regras além dele são cortadas na ordem de coleta.
+    titulos_excluidos: termos de nível (ex.: Staff, Principal) que descartam a vaga pelo título."""
     linhas = _excluidas_terms(excluidas_text)
     vistos_link, vistos_te, out, fora = set(), set(), [], []
 
@@ -140,6 +164,10 @@ def processar(vagas, excluidas_text, desde=None, hoje=None, remoto=False, maximo
         d = _data(v)
         if (emp and any(emp in l for l in linhas)) or (lk and any(lk in l for l in linhas)):
             descarta(v, "consta em vagas_excluidas.md")
+            continue
+        termo = termo_no_titulo(v.get("titulo"), titulos_excluidos)
+        if termo:
+            descarta(v, f"nível acima do alvo (título contém {termo!r})")
             continue
         status = _norm(v.get("status") or "aberta")
         if status != "aberta":
@@ -298,6 +326,13 @@ def main(argv=None):
             print("--listagens é obrigatório em 'candidatos' (arquivo JSON existente)", file=sys.stderr)
             return 2
         itens = json.loads(Path(a.listagens).read_text(encoding="utf-8"))
+        termos = titulos_excluidos(cfg)
+        for it in itens:  # corta antes da verificação: evita abrir uma página por vaga de nível acima
+            termo = termo_no_titulo(it.get("titulo"), termos)
+            if termo:
+                print(f"descartada pelo título ({termo}): {it.get('titulo', '')} | {it.get('empresa', '')}",
+                      file=sys.stderr)
+        itens = [it for it in itens if not termo_no_titulo(it.get("titulo"), termos)]
         sel = selecionar(itens, Path(a.excluidas).read_text(encoding="utf-8"), a.por_url, a.total)
         print(json.dumps(sel, ensure_ascii=False, indent=1))
         return 0
@@ -311,7 +346,8 @@ def main(argv=None):
         print(f"{len(probs)} problema(s) no JSON de resultados; nada foi gravado.", file=sys.stderr)
         return 1
     final, fora = processar(vagas, Path(a.excluidas).read_text(encoding="utf-8"), desde, hoje,
-                          remoto=_norm(cfg.get("regime")) == "remoto", maximo=a.max)
+                          remoto=_norm(cfg.get("regime")) == "remoto", maximo=a.max,
+                          titulos_excluidos=titulos_excluidos(cfg))
     out = Path(a.saida_dir)
     out.mkdir(parents=True, exist_ok=True)
     dest = out / f"{a.data}-busca.md"

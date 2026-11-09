@@ -4,7 +4,7 @@
 
 **Blocked by:** nenhum
 
-**Status:** needs-triage
+**Status:** ready-for-human
 
 ## O que foi observado
 
@@ -20,10 +20,12 @@
 
 ## Critérios de aceite
 
-- [ ] Com `titulos_excluidos` preenchido, vaga cujo título contém um dos termos (sem acento, sem diferença de caixa, palavra inteira) vai para "Descartadas" com o motivo.
-- [ ] Vaga "Senior" sem outro termo da lista continua aceita.
-- [ ] Campo ausente ou vazio não muda o comportamento atual.
-- [ ] Teste em `make test-busca` cobrindo os três casos acima.
-- [ ] `busca.example.yaml` e o README explicam o campo.
+- [x] Com `titulos_excluidos` preenchido, vaga cujo título contém um dos termos (sem acento, sem diferença de caixa, palavra inteira) vai para "Descartadas" com o motivo.
+- [x] Vaga "Senior" sem outro termo da lista continua aceita.
+- [x] Campo ausente ou vazio não muda o comportamento atual.
+- [x] Teste em `make test-busca` cobrindo os três casos acima.
+- [x] `busca.example.yaml` e o README explicam o campo.
 
 ## Comments
+
+- Implementada a opção A em `scripts/busca.py`: `titulos_excluidos` corta no `candidatos` (antes de abrir a página; os cortados saem no stderr) e no `processar()` (rede de segurança, com motivo em "Descartadas"). Testes em `make test-busca`.
