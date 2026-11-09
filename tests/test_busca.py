@@ -181,6 +181,20 @@ class Candidatos(unittest.TestCase):
         self.assertEqual(self.ids(sel), ["A2", "A3"])
 
 
+class Filtros(unittest.TestCase):
+    """filtros_extras(): o que o LinkedIn aplicou além do que pedimos."""
+
+    FINAL = ("https://www.linkedin.com/jobs/search-results/?currentJobId=4444445689&keywords=Backend%20Developer"
+             "&geoId=106057199&f_TPR=r172800&f_SAL=f_SA_id_225001%3A272001")
+
+    def test_aponta_filtro_que_nao_pedimos(self):
+        self.assertEqual(b.filtros_extras(self.FINAL), {"f_SAL": "f_SA_id_225001:272001"})
+
+    def test_url_so_com_o_pedido_nao_tem_extra(self):
+        ok = "https://www.linkedin.com/jobs/search-results/?currentJobId=1&keywords=Go&geoId=1&f_TPR=r1&f_WT=2&sortBy=DD"
+        self.assertEqual(b.filtros_extras(ok), {})
+
+
 class Render(unittest.TestCase):
     def test_grupos_com_numeracao_continua_e_descartadas(self):
         vs = [vaga(titulo="Ext A", candidatura="externa", link="https://x/1"),
@@ -312,6 +326,14 @@ class Cli(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual([i["titulo"] for i in json.loads(r.stdout)], ["A1", "B1", "C1", "A2", "B2"])
         self.assertEqual(self.run_cli("candidatos", "--listagens", str(self.p / "nao_existe.json")).returncode, 2)
+
+    def test_filtros_imprime_extras_ou_diz_que_nao_ha(self):
+        r = self.run_cli("filtros", "--url", Filtros.FINAL)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("f_SAL=f_SA_id_225001:272001", r.stdout)
+        r = self.run_cli("filtros", "--url", "https://www.linkedin.com/jobs/search-results/?keywords=Go&f_TPR=r1")
+        self.assertIn("nenhum filtro extra", r.stdout)
+        self.assertEqual(self.run_cli("filtros").returncode, 2)
 
 
 if __name__ == "__main__":

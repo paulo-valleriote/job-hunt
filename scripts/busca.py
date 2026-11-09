@@ -4,13 +4,14 @@
 A coleta em si é feita pelo Claude no navegador (Chromium do WSL com porta de debug, via MCP
 chrome-devtools, com login do usuário); este script só faz a parte determinística. Subcomandos (todos passam antes por validar_config):
   urls     imprime a data "desde" e as URLs de busca (só cargo, local, regime e janela de data)
+  filtros  lista os filtros que o LinkedIn aplicou além do pedido, a partir da URL final
   candidatos  da listagem de todas as URLs, escolhe em rodízio quem será aberto e verificado
   gravar   lê JSON de candidatos, descarta inválidas/excluídas/duplicadas e grava AAAA-MM-DD-busca.md
 """
 import argparse, json, re, sys
 from datetime import date, timedelta
 from pathlib import Path
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import validar_config  # noqa: E402
@@ -18,6 +19,9 @@ import validar_config  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 JANELA_PADRAO, JANELA_MAX = 7, 30
 MAX_VAGAS = 20  # o método pede de 10 a 20 vagas por rodada
+# Parâmetros da URL final do LinkedIn que pedimos ou que são só navegação; o resto é filtro dele.
+PARAMS_ESPERADOS = {"keywords", "location", "geoId", "f_TPR", "f_WT", "sortBy", "currentJobId",
+                    "origin", "lipi", "skipRedirect", "infoNotice", "referralSearchId"}
 POR_URL, TOTAL_CANDIDATOS = 5, 25  # candidatos abertos por URL e no total, antes da verificação
 # LinkedIn entende melhor o nome do local em inglês.
 LOCAIS = {"brasil": "Brazil", "eua": "United States", "estados unidos": "United States",
@@ -176,6 +180,12 @@ def processar(vagas, excluidas_text, desde=None, hoje=None, remoto=False, maximo
     return out, fora
 
 
+def filtros_extras(url):
+    """Filtros que o LinkedIn aplicou além do pedido (ex.: f_SAL, que pode esconder vagas)."""
+    q = parse_qs(urlsplit(url).query)
+    return {k: v[0] for k, v in q.items() if k not in PARAMS_ESPERADOS}
+
+
 def selecionar(itens, excluidas_text, por_url=POR_URL, total=TOTAL_CANDIDATOS):
     """Da listagem de todas as URLs ({origem, id, titulo, empresa, ...}, na ordem lida) ao que será
     aberto e verificado: em rodízio entre as URLs (nenhuma domina), no máximo por_url por URL e
@@ -247,11 +257,12 @@ def render(vagas, data, descartadas=(), desde=None):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["urls", "candidatos", "gravar"])
+    ap.add_argument("cmd", choices=["urls", "candidatos", "filtros", "gravar"])
     ap.add_argument("--busca", default=str(ROOT / "busca.yaml"))
     ap.add_argument("--excluidas", default=str(ROOT / "private/perfil/vagas_excluidas.md"))
     ap.add_argument("--resultados")
     ap.add_argument("--listagens", help="JSON da listagem de todas as URLs (comando 'candidatos')")
+    ap.add_argument("--url", help="URL final da página de busca (comando 'filtros')")
     ap.add_argument("--por-url", type=int, default=POR_URL)
     ap.add_argument("--total", type=int, default=TOTAL_CANDIDATOS)
     ap.add_argument("--saida-dir", default=str(ROOT / "private/vagas"))
@@ -272,6 +283,13 @@ def main(argv=None):
     if a.cmd == "urls":
         print(f"desde {desde}")
         print("\n".join(build_urls(cfg, desde, hoje)))
+        return 0
+    if a.cmd == "filtros":
+        if not a.url:
+            print("--url é obrigatório em 'filtros' (a URL final, depois do redirecionamento)", file=sys.stderr)
+            return 2
+        extras = filtros_extras(a.url)
+        print("\n".join(f"{k}={v}" for k, v in extras.items()) or "nenhum filtro extra")
         return 0
     if a.cmd == "candidatos":
         if not a.listagens or not Path(a.listagens).is_file():
