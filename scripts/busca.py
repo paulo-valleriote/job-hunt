@@ -4,6 +4,7 @@
 A coleta em si é feita pelo Claude no navegador (Chromium do WSL com porta de debug, via MCP
 chrome-devtools, com login do usuário); este script só faz a parte determinística. Subcomandos (todos passam antes por validar_config):
   urls     imprime a data "desde" e as URLs de busca (só cargo, local, regime e janela de data)
+  candidatos  da listagem de todas as URLs, escolhe em rodízio quem será aberto e verificado
   gravar   lê JSON de candidatos, descarta inválidas/excluídas/duplicadas e grava AAAA-MM-DD-busca.md
 """
 import argparse, json, re, sys
@@ -17,6 +18,7 @@ import validar_config  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 JANELA_PADRAO, JANELA_MAX = 7, 30
 MAX_VAGAS = 20  # o método pede de 10 a 20 vagas por rodada
+POR_URL, TOTAL_CANDIDATOS = 5, 25  # candidatos abertos por URL e no total, antes da verificação
 # LinkedIn entende melhor o nome do local em inglês.
 LOCAIS = {"brasil": "Brazil", "eua": "United States", "estados unidos": "United States",
           "reino unido": "United Kingdom", "portugal": "Portugal", "canadá": "Canada",
@@ -174,6 +176,30 @@ def processar(vagas, excluidas_text, desde=None, hoje=None, remoto=False, maximo
     return out, fora
 
 
+def selecionar(itens, excluidas_text, por_url=POR_URL, total=TOTAL_CANDIDATOS):
+    """Da listagem de todas as URLs ({origem, id, titulo, empresa, ...}, na ordem lida) ao que será
+    aberto e verificado: em rodízio entre as URLs (nenhuma domina), no máximo por_url por URL e
+    total no geral."""
+    linhas = _excluidas_terms(excluidas_text)
+    por_origem, vistos = {}, set()
+    for it in itens:
+        emp = _norm(it.get("empresa"))
+        if it.get("id") in vistos or (emp and any(emp in l for l in linhas)):
+            continue
+        vistos.add(it.get("id"))
+        por_origem.setdefault(it.get("origem"), []).append(it)
+    filas = [iter(v[:por_url]) for v in por_origem.values()]
+    out = []
+    while filas and len(out) < total:
+        for f in list(filas):
+            it = next(f, None)
+            if it is None:
+                filas.remove(f)
+            elif len(out) < total:
+                out.append(it)
+    return out
+
+
 def validar_vagas(vagas):
     """Problemas do contrato skill -> script; lista vazia = JSON utilizável."""
     probs = []
@@ -221,10 +247,13 @@ def render(vagas, data, descartadas=(), desde=None):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["urls", "gravar"])
+    ap.add_argument("cmd", choices=["urls", "candidatos", "gravar"])
     ap.add_argument("--busca", default=str(ROOT / "busca.yaml"))
     ap.add_argument("--excluidas", default=str(ROOT / "private/perfil/vagas_excluidas.md"))
     ap.add_argument("--resultados")
+    ap.add_argument("--listagens", help="JSON da listagem de todas as URLs (comando 'candidatos')")
+    ap.add_argument("--por-url", type=int, default=POR_URL)
+    ap.add_argument("--total", type=int, default=TOTAL_CANDIDATOS)
     ap.add_argument("--saida-dir", default=str(ROOT / "private/vagas"))
     ap.add_argument("--data", default=date.today().isoformat())
     ap.add_argument("--desde", help="AAAA-MM-DD; padrão: data da última busca")
@@ -243,6 +272,14 @@ def main(argv=None):
     if a.cmd == "urls":
         print(f"desde {desde}")
         print("\n".join(build_urls(cfg, desde, hoje)))
+        return 0
+    if a.cmd == "candidatos":
+        if not a.listagens or not Path(a.listagens).is_file():
+            print("--listagens é obrigatório em 'candidatos' (arquivo JSON existente)", file=sys.stderr)
+            return 2
+        itens = json.loads(Path(a.listagens).read_text(encoding="utf-8"))
+        sel = selecionar(itens, Path(a.excluidas).read_text(encoding="utf-8"), a.por_url, a.total)
+        print(json.dumps(sel, ensure_ascii=False, indent=1))
         return 0
     if not a.resultados:
         print("--resultados é obrigatório em 'gravar'", file=sys.stderr)

@@ -148,6 +148,39 @@ class Processar(unittest.TestCase):
         self.assertEqual(len(b.processar([vaga()], "", desde=DESDE, hoje=HOJE)[0]), 1)
 
 
+class Candidatos(unittest.TestCase):
+    """selecionar(): da listagem de todas as URLs ao que será aberto e verificado."""
+
+    def item(self, origem, n, **kw):
+        return {"origem": origem, "id": f"{origem}{n:03d}".replace("A", "1").replace("B", "2").replace("C", "3"),
+                "titulo": f"{origem}{n}", "empresa": f"Emp {origem}{n}", **kw}
+
+    def ids(self, itens):
+        return [i["titulo"] for i in itens]
+
+    def test_rodizio_entre_urls_com_teto_por_url(self):
+        itens = [self.item("A", n) for n in range(1, 9)] + [self.item("B", n) for n in range(1, 4)] \
+              + [self.item("C", n) for n in range(1, 3)]
+        sel = b.selecionar(itens, "", por_url=3, total=25)
+        self.assertEqual(self.ids(sel), ["A1", "B1", "C1", "A2", "B2", "C2", "A3", "B3"])
+
+    def test_mesmo_id_em_varias_urls_conta_uma_vez(self):
+        repetida = self.item("A", 1)
+        itens = [repetida, self.item("A", 2),
+                 {**repetida, "origem": "B"}, self.item("B", 2), self.item("B", 3)]
+        sel = b.selecionar(itens, "", por_url=2, total=25)
+        self.assertEqual(self.ids(sel), ["A1", "B2", "A2", "B3"])
+
+    def test_total_corta_o_rodizio(self):
+        itens = [self.item(o, n) for o in "ABC" for n in range(1, 5)]
+        self.assertEqual(self.ids(b.selecionar(itens, "", por_url=5, total=4)), ["A1", "B1", "C1", "A2"])
+
+    def test_empresa_excluida_nao_ocupa_lugar(self):
+        itens = [self.item("A", 1, empresa="Acme Corp"), self.item("A", 2), self.item("A", 3)]
+        sel = b.selecionar(itens, EXC_OK, por_url=2, total=25)
+        self.assertEqual(self.ids(sel), ["A2", "A3"])
+
+
 class Render(unittest.TestCase):
     def test_grupos_com_numeracao_continua_e_descartadas(self):
         vs = [vaga(titulo="Ext A", candidatura="externa", link="https://x/1"),
@@ -269,6 +302,16 @@ class Cli(unittest.TestCase):
         self.assertIn("Vaga 22 | Beta SA | acima do limite de 20", txt)
         r, out = self.grava(vs, "--max", "5")
         self.assertIn("5 vaga(s)", r.stdout)
+
+    def test_candidatos_imprime_json_da_selecao(self):
+        itens = [{"origem": o, "id": f"{n}{i}", "titulo": f"{o}{i}", "empresa": f"E{o}{i}"}
+                 for n, o in enumerate("ABC", 1) for i in range(1, 8)]
+        lst = self.p / "lst.json"
+        lst.write_text(json.dumps(itens))
+        r = self.run_cli("candidatos", "--listagens", str(lst), "--por-url", "2", "--total", "5")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([i["titulo"] for i in json.loads(r.stdout)], ["A1", "B1", "C1", "A2", "B2"])
+        self.assertEqual(self.run_cli("candidatos", "--listagens", str(self.p / "nao_existe.json")).returncode, 2)
 
 
 if __name__ == "__main__":
