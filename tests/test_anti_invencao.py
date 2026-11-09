@@ -85,6 +85,89 @@ class Checar(unittest.TestCase):
         self.assertEqual([x for x in a.checar(r, PERFIL) if "Present" in x["fato"]], [])
 
 
+PERFIL_PT = """# Perfil
+### Beta SA — Backend Engineer (2021-01 a atual)
+- Node.js e APIs REST.
+- Serviços de até 2.800 requisições por segundo, em mais de 25 ambientes. [medido]
+- Reduzi logs de 4,5% para 3,0% do volume total. [medido]
+- Plataforma com mais de R$ 100 mil em ativos.
+- Microsserviços com comunicação assíncrona (SNS/SQS), sistemas distribuídos e WebSockets.
+- Testes automatizados: unitários, de integração e E2E; testes de regressão; refatoração.
+## Formação
+- Tecnólogo em Sistemas de Computação — Universidade Exemplo — em andamento desde 2023-07.
+## Certificações
+AWS Certified Developer – Associate — Amazon — situação: [válida].
+AWS Certified Cloud Practitioner — Amazon — situação: [expirada em 08/2026].
+## Idiomas
+- Português — nativo.
+- Inglês — avançado
+"""
+
+RESUME_EN = {
+    "basics": {"name": "Fulana", "label": "Backend Engineer",
+               "summary": "Backend engineer using Node.js/SQS. Services reach up to 2,800 requests per second across 25+ environments."},
+    "work": [{"name": "Beta SA", "position": "Backend Engineer", "startDate": "2021-01", "endDate": "Present",
+              "highlights": ["Reduced logs from 4.5% to 3.0% of total volume on a platform with over R$ 100k in assets.",
+                             "Built microservices with asynchronous communication (SNS/SQS) and WebSocket updates."]}],
+    "education": [{"institution": "Universidade Exemplo", "studyType": "Technologist degree (in progress)",
+                   "area": "Computer Systems", "startDate": "2023-07", "endDate": ""}],
+    "skills": [{"name": "x", "keywords": ["Microservices", "Distributed systems", "Unit tests", "Integration tests",
+                                          "E2E tests", "Regression tests", "Refactoring", "REST APIs"]}],
+    "certificates": [{"name": "AWS Certified Developer – Associate (valid)", "issuer": "Amazon", "date": ""},
+                     {"name": "AWS Certified Cloud Practitioner (expired 08/2026)", "issuer": "Amazon", "date": ""}],
+    "languages": [{"language": "Portuguese", "fluency": "Native"}, {"language": "English", "fluency": "Advanced"}],
+}
+
+
+def en(mut):
+    r = copy.deepcopy(RESUME_EN); mut(r); return r
+
+
+class InglesSobrePerfilEmPortugues(unittest.TestCase):
+    def test_traducao_fiel_passa(self):
+        self.assertEqual(a.checar(RESUME_EN, PERFIL_PT), [])
+
+    def test_numeros_em_outro_formato_passam(self):
+        self.assertEqual(a._canon_numeros("2,800 e 2.800 e 4.5% e 4,5% e 100k e 100 mil e 25+"),
+                         "2800 e 2800 e 4.5% e 4.5% e 100000 e 100000 e 25")
+
+    def test_numero_alterado_reprova(self):
+        for troca in ("2,800", "25+", "4.5%", "100k"):
+            novo = {"2,800": "3,800", "25+": "40+", "4.5%": "5.5%", "100k": "900k"}[troca]
+            def mut(r, a_=troca, b_=novo):
+                r["basics"]["summary"] = r["basics"]["summary"].replace(a_, b_)
+                r["work"][0]["highlights"][0] = r["work"][0]["highlights"][0].replace(a_, b_)
+            self.assertTrue(a.checar(en(mut), PERFIL_PT), troca)
+
+    def test_certificacao_com_situacao_trocada_reprova(self):
+        r = en(lambda r: r["certificates"][1].update(name="AWS Certified Cloud Practitioner (valid)"))
+        self.assertTrue(any("situação" in x["motivo"] for x in a.checar(r, PERFIL_PT)))
+
+    def test_certificacao_com_data_errada_reprova(self):
+        r = en(lambda r: r["certificates"][1].update(name="AWS Certified Cloud Practitioner (expired 01/2026)"))
+        self.assertTrue(any("situação" in x["motivo"] for x in a.checar(r, PERFIL_PT)))
+
+    def test_certificacao_inexistente_com_situacao_reprova(self):
+        r = en(lambda r: r["certificates"].append({"name": "CISSP (valid)", "issuer": "Amazon", "date": ""}))
+        self.assertTrue(any("CISSP" in x["fato"] for x in a.checar(r, PERFIL_PT)))
+
+    def test_traducao_sem_termo_no_perfil_reprova(self):
+        perfil = PERFIL_PT.replace("Microsserviços", "Serviços")
+        self.assertTrue(any(x["fato"] == "Microservices" for x in a.checar(RESUME_EN, perfil)))
+
+    def test_composto_com_parte_inventada_reprova(self):
+        r = en(lambda r: r["basics"].update(summary="Backend engineer using Node.js/Kubernetes daily."))
+        self.assertTrue(any("Kubernetes" in x["motivo"] for x in a.checar(r, PERFIL_PT)))
+
+    def test_idioma_nao_listado_reprova(self):
+        r = en(lambda r: r["languages"].append({"language": "German", "fluency": "Fluent"}))
+        self.assertTrue(any("German" in x["fato"] for x in a.checar(r, PERFIL_PT)))
+
+    def test_formacao_inventada_reprova(self):
+        r = en(lambda r: r["education"][0].update(studyType="PhD"))
+        self.assertTrue(any("PhD" in x["fato"] for x in a.checar(r, PERFIL_PT)))
+
+
 class Cli(unittest.TestCase):
     def roda(self, resume):
         d = tempfile.TemporaryDirectory(); self.addCleanup(d.cleanup)
