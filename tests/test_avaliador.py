@@ -81,6 +81,38 @@ class Finalizar(unittest.TestCase):
                 a.finalizar(d)
 
 
+class Ciclo(unittest.TestCase):
+    """Regressão do laço do passo 8b: a cada versão, decidir; ao parar, finalizar."""
+
+    def rodar(self, notas):
+        with tempfile.TemporaryDirectory() as d:
+            acao = None
+            for n, nota in enumerate(notas, 1):
+                versao(d, n, nota)
+                acao, motivo = a.decidir(notas[:n])
+                if acao == "parar":
+                    break
+            entregue = a.finalizar(d)
+            rep = (Path(d) / "rating_report.md").read_text()
+            return acao, motivo, entregue, rep
+
+    def test_nao_melhorou_para_e_entrega_a_melhor(self):
+        acao, motivo, entregue, rep = self.rodar([8, 7])
+        self.assertEqual(acao, "parar"); self.assertIn("não melhorou", motivo)
+        self.assertEqual(entregue, 1)
+        self.assertIn("Entregue: v1", rep)
+
+    def test_melhora_ate_alvo_entrega_a_ultima(self):
+        acao, _, entregue, _ = self.rodar([6, 7, 8.5])
+        self.assertEqual(acao, "parar")
+        self.assertEqual(entregue, 3)
+
+    def test_teto_de_tres_revisoes(self):
+        acao, motivo, entregue, _ = self.rodar([5, 6, 7, 7.8])
+        self.assertEqual(acao, "parar"); self.assertIn("máximo", motivo)
+        self.assertEqual(entregue, 4)
+
+
 class Cli(unittest.TestCase):
     def run_cli(self, *args, env=None):
         return subprocess.run([sys.executable, str(ROOT / "scripts/avaliador.py"), *args],

@@ -3,13 +3,14 @@
 
   curriculo.py idioma <texto da vaga> [--forcar en|pt]   -> imprime en|pt
   curriculo.py pasta --empresa E --cargo C [--base private/curriculos] [--data AAAA-MM-DD] -> imprime o caminho
+  curriculo.py lint <pasta> --idioma en|pt               -> avisos de idioma e voz (exit 0 sempre)
   curriculo.py coverage <coverage_review.md>             -> valida o relatório
   curriculo.py pdf <pasta>                               -> resume.json -> .tex -> PDF
 
 Heurística de idioma: conta stopwords EN vs PT no texto da vaga; empate cai em EN
 (foco do usuário). O modelo só decide se o texto for ambíguo/misto (ver /curriculo).
 """
-import argparse, re, shutil, subprocess, sys
+import argparse, json, re, shutil, subprocess, sys
 from datetime import date
 from pathlib import Path
 
@@ -33,6 +34,60 @@ def detectar_idioma(texto, forcar=None):
     en = sum(w in EN for w in palavras)
     pt = sum(w in PT for w in palavras)
     return "pt" if pt > en else "en"
+
+
+VOZ_3P_EN = set("leads manages develops builds creates designs implements delivers improves reduces "
+                "increases owns drives runs supports coordinates migrates automates oversees".split())
+
+
+def _palavras(texto):
+    """Palavras que contam para o idioma: sem siglas (tudo maiúsculo) nem números."""
+    return [w for w in re.findall(r"[A-Za-zÀ-ÿ]+", texto)
+            if not (w.isupper() and len(w) > 1)]
+
+
+def _destoa(texto, idioma):
+    """True se o texto tem mais palavras exclusivas do outro idioma do que do escolhido."""
+    ps = [w.lower() for w in _palavras(texto)]
+    so_en = sum(w in EN and w not in PT for w in ps)
+    so_pt = sum(w in PT and w not in EN for w in ps)
+    return (so_en > so_pt) if idioma == "pt" else (so_pt > so_en)
+
+
+def _voz_3a_pessoa(texto, idioma):
+    """Primeira palavra com cara de verbo em 3ª pessoa (PT: -eu/-iu/-ou no passado; EN: lista)."""
+    m = re.match(r"\s*([A-Za-zÀ-ÿ]+)", texto)
+    if not m:
+        return False
+    w = m.group(1).lower()
+    if idioma == "pt":
+        return len(w) >= 5 and w.endswith(("eu", "iu", "ou")) and w != "estou"
+    return w in VOZ_3P_EN
+
+
+def lint_resume(dados, idioma):
+    """Avisos (não bloqueiam) sobre idioma e voz dos textos livres do resume.json."""
+    avisos = []
+    base = dados.get("basics", {})
+    resumo = base.get("summary", "")
+    if resumo and _destoa(resumo, idioma):
+        avisos.append(f"basics.summary parece não estar em {idioma}; revise")
+    for i, emprego in enumerate(dados.get("work", [])):
+        rotulo = f"work[{i}] ({emprego.get('name', '?')})"
+        for j, destaque in enumerate(emprego.get("highlights", []), 1):
+            if _destoa(destaque, idioma):
+                avisos.append(f"{rotulo} destaque {j} parece não estar em {idioma}: {destaque[:60]}")
+            if _voz_3a_pessoa(destaque, idioma):
+                avisos.append(f"{rotulo} destaque {j} começa com verbo em 3ª pessoa "
+                              f"(use 1ª pessoa): {destaque[:60]}")
+    return avisos
+
+
+def lint(pasta, idioma):
+    j = Path(pasta) / "resume.json"
+    if not j.is_file():
+        return ["resume.json não encontrado na pasta"]
+    return lint_resume(json.loads(j.read_text(encoding="utf-8")), idioma)
 
 
 def pasta_saida(base, data, empresa, cargo):
@@ -84,7 +139,16 @@ def main(argv=None):
     p.add_argument("--base", default=str(BASE)); p.add_argument("--data", default=date.today().isoformat())
     v = sub.add_parser("coverage"); v.add_argument("arquivo")
     g = sub.add_parser("pdf"); g.add_argument("pasta")
+    l = sub.add_parser("lint"); l.add_argument("pasta"); l.add_argument("--idioma", required=True, choices=("en", "pt"))
     a = ap.parse_args(argv)
+    if a.cmd == "lint":
+        # Só avisa: exit 0 sempre. Falhas de leitura também viram aviso na saída.
+        try:
+            avisos = lint(a.pasta, a.idioma)
+        except (OSError, json.JSONDecodeError) as e:
+            avisos = [f"lint não rodou: {e}"]
+        print("\n".join(f"AVISO: {x}" for x in avisos) if avisos else "lint de idioma/voz: sem avisos")
+        return 0
     if a.cmd == "idioma":
         try:
             print(detectar_idioma(a.texto, a.forcar))

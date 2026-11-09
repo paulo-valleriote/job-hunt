@@ -108,6 +108,60 @@ class Gerar(unittest.TestCase):
             self.assertIn("make setup", " ".join(c.gerar_pdf(d, vendor=Path(d) / "nada")))
 
 
+def resume_fake(summary, highlights):
+    return {"basics": {"name": "Fulana", "label": "Dev", "email": "f@example.com", "summary": summary},
+            "work": [{"name": "Empresa Fictícia", "position": "Dev", "startDate": "2020",
+                      "highlights": highlights}],
+            "education": [], "skills": []}
+
+
+class Lint(unittest.TestCase):
+    RESUMO_PT = "Desenvolvedora com experiência em Python para times de produto e com foco em APIs."
+
+    def test_destaque_em_ingles_em_curriculo_pt_gera_um_aviso(self):
+        avisos = c.lint_resume(resume_fake(self.RESUMO_PT,
+                                           ["Desenvolvi APIs em Python para o time de produto",
+                                            "Led the team to deliver features with our partners"]), "pt")
+        self.assertEqual(len(avisos), 1)
+        self.assertIn("destaque 2", avisos[0])
+
+    def test_curriculo_coerente_sem_avisos(self):
+        self.assertEqual(c.lint_resume(resume_fake(self.RESUMO_PT,
+                                                   ["Desenvolvi APIs em Python para o time de produto"]), "pt"), [])
+
+    def test_campo_so_com_siglas_sem_aviso(self):
+        self.assertEqual(c.lint_resume(resume_fake("AWS, API, SQL e CI/CD", ["ETL com AWS e SQL"]), "pt"), [])
+
+    def test_resumo_em_ingles_com_idioma_pt_avisa(self):
+        avisos = c.lint_resume(resume_fake("Engineer with experience in the cloud and data for the team",
+                                           ["Desenvolvi APIs em Python"]), "pt")
+        self.assertEqual(len(avisos), 1)
+        self.assertIn("summary", avisos[0])
+
+    def test_voz_3a_pessoa_em_pt_avisa(self):
+        avisos = c.lint_resume(resume_fake(self.RESUMO_PT, ["Desenvolveu APIs em Python"]), "pt")
+        self.assertEqual(len(avisos), 1)
+        self.assertIn("3ª pessoa", avisos[0])
+
+    def test_voz_1a_pessoa_em_pt_passa(self):
+        self.assertEqual(c.lint_resume(resume_fake(self.RESUMO_PT, ["Criei pipelines de dados"]), "pt"), [])
+
+    def test_voz_en(self):
+        self.assertEqual(c.lint_resume(resume_fake("Engineer with experience in cloud for the team",
+                                                   ["Developed APIs in Python"]), "en"), [])
+        avisos = c.lint_resume(resume_fake("Engineer with experience in cloud for the team",
+                                           ["Leads a team of engineers"]), "en")
+        self.assertEqual(len(avisos), 1)
+        self.assertIn("3ª pessoa", avisos[0])
+
+    def test_lint_pasta_sempre_sai_zero(self):
+        with tempfile.TemporaryDirectory() as d:
+            import json as _j
+            (Path(d) / "resume.json").write_text(_j.dumps(
+                resume_fake(self.RESUMO_PT, ["Desenvolveu APIs"]), ensure_ascii=False), encoding="utf-8")
+            self.assertEqual(c.lint(d, "pt"), c.lint_resume(_j.loads((Path(d) / "resume.json").read_text(encoding="utf-8")), "pt"))
+
+
 class CLI(unittest.TestCase):
     def run_cli(self, *a):
         return subprocess.run([sys.executable, str(ROOT / "scripts/curriculo.py"), *a],
@@ -122,6 +176,18 @@ class CLI(unittest.TestCase):
             r = self.run_cli("pasta", "--base", d, "--empresa", "Acme", "--cargo", "Dev", "--data", "2026-01-05")
             self.assertEqual(r.returncode, 0)
             self.assertTrue(Path(r.stdout.strip()).is_dir())
+
+    def test_lint_cli_avisa_e_sai_zero(self):
+        import json as _j
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "resume.json").write_text(_j.dumps(
+                resume_fake("Desenvolvedora com experiência em Python para o time", ["Led the team to deliver features"])), encoding="utf-8")
+            r = self.run_cli("lint", d, "--idioma", "pt")
+            self.assertEqual(r.returncode, 0)
+            self.assertIn("destaque 1", r.stdout)
+            r2 = self.run_cli("lint", d + "/inexistente", "--idioma", "pt")
+            self.assertEqual(r2.returncode, 0)
+            self.assertIn("resume.json", r2.stdout)
 
     def test_coverage_invalido(self):
         with tempfile.TemporaryDirectory() as d:
