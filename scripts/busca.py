@@ -16,6 +16,7 @@ import validar_config  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 JANELA_PADRAO, JANELA_MAX = 7, 30
+MAX_VAGAS = 20  # o método pede de 10 a 20 vagas por rodada
 # LinkedIn entende melhor o nome do local em inglês.
 LOCAIS = {"brasil": "Brazil", "eua": "United States", "estados unidos": "United States",
           "reino unido": "United Kingdom", "portugal": "Portugal", "canadá": "Canada",
@@ -113,10 +114,11 @@ def _data(v):
         return None
 
 
-def processar(vagas, excluidas_text, desde=None, hoje=None, remoto=False):
+def processar(vagas, excluidas_text, desde=None, hoje=None, remoto=False, maximo=None):
     """Devolve (aceitas, descartadas). Descartada = {titulo, empresa, link, motivo}.
     remoto=True (regime remoto): exige modalidade remota verificada e que a vaga aceite candidatos
-    do Brasil, da LATAM ou de qualquer lugar (campos "modalidade" e "elegibilidade")."""
+    do Brasil, da LATAM ou de qualquer lugar (campos "modalidade" e "elegibilidade").
+    maximo: teto de vagas aceitas; as que passam das regras além dele são cortadas na ordem de coleta."""
     linhas = _excluidas_terms(excluidas_text)
     vistos_link, vistos_te, out, fora = set(), set(), [], []
 
@@ -161,6 +163,9 @@ def processar(vagas, excluidas_text, desde=None, hoje=None, remoto=False):
         te = (_norm(v.get("titulo")), emp)
         if (lk and lk in vistos_link) or te in vistos_te:
             descarta(v, "duplicada")
+            continue
+        if maximo and len(out) >= maximo:
+            descarta(v, f"acima do limite de {maximo} vagas (ordem de coleta)")
             continue
         if lk:
             vistos_link.add(lk)
@@ -223,6 +228,7 @@ def main(argv=None):
     ap.add_argument("--saida-dir", default=str(ROOT / "private/vagas"))
     ap.add_argument("--data", default=date.today().isoformat())
     ap.add_argument("--desde", help="AAAA-MM-DD; padrão: data da última busca")
+    ap.add_argument("--max", type=int, default=MAX_VAGAS, help=f"teto de vagas gravadas (padrão {MAX_VAGAS})")
     a = ap.parse_args(argv)
     probs = validar_config.validate(a.busca, a.excluidas)
     if probs:
@@ -248,7 +254,7 @@ def main(argv=None):
         print(f"{len(probs)} problema(s) no JSON de resultados; nada foi gravado.", file=sys.stderr)
         return 1
     final, fora = processar(vagas, Path(a.excluidas).read_text(encoding="utf-8"), desde, hoje,
-                          remoto=_norm(cfg.get("regime")) == "remoto")
+                          remoto=_norm(cfg.get("regime")) == "remoto", maximo=a.max)
     out = Path(a.saida_dir)
     out.mkdir(parents=True, exist_ok=True)
     dest = out / f"{a.data}-busca.md"

@@ -130,6 +130,20 @@ class Processar(unittest.TestCase):
     def test_sem_exigir_remoto_nao_checa_modalidade(self):
         self.assertEqual(len(b.processar([vaga(modalidade="híbrido", elegibilidade="")], "")[0]), 1)
 
+    def test_limite_corta_pela_ordem_de_coleta_e_lista_as_cortadas(self):
+        vs = [vaga(titulo=f"Vaga {i}", link=f"https://x/{i}") for i in range(1, 6)]
+        ok, fora = b.processar(vs, "", maximo=3)
+        self.assertEqual([v["titulo"] for v in ok], ["Vaga 1", "Vaga 2", "Vaga 3"])
+        self.assertEqual([d["titulo"] for d in fora], ["Vaga 4", "Vaga 5"])
+        self.assertIn("limite de 3", fora[0]["motivo"])
+
+    def test_descartada_por_regra_nao_ocupa_lugar_no_limite(self):
+        vs = [vaga(titulo="Velha", link="https://x/0", data="2026-10-20"),
+              vaga(titulo="A", link="https://x/1"), vaga(titulo="B", link="https://x/2")]
+        ok, fora = b.processar(vs, "", desde=DESDE, maximo=2)
+        self.assertEqual([v["titulo"] for v in ok], ["A", "B"])
+        self.assertEqual([d["titulo"] for d in fora], ["Velha"])
+
     def test_aceita_dentro_da_janela(self):
         self.assertEqual(len(b.processar([vaga()], "", desde=DESDE, hoje=HOJE)[0]), 1)
 
@@ -246,6 +260,15 @@ class Cli(unittest.TestCase):
         r, out = self.grava([sem_link])
         self.assertEqual(r.returncode, 1)
         self.assertIn("link", r.stderr)
+
+    def test_gravar_limita_a_20_por_padrao_e_aceita_max(self):
+        vs = [vaga(titulo=f"Vaga {i}", link=f"https://x/{i}") for i in range(1, 23)]
+        r, out = self.grava(vs)
+        self.assertIn("20 vaga(s)", r.stdout)
+        txt = (out / "2026-11-08-busca.md").read_text()
+        self.assertIn("Vaga 22 | Beta SA | acima do limite de 20", txt)
+        r, out = self.grava(vs, "--max", "5")
+        self.assertIn("5 vaga(s)", r.stdout)
 
 
 if __name__ == "__main__":
