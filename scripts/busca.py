@@ -4,18 +4,26 @@
 A coleta em si é feita pelo Claude no navegador (Chromium do WSL com porta de debug, via MCP
 chrome-devtools, com login do usuário); este script só faz a parte determinística. Subcomandos (todos passam antes por validar_config):
   urls     imprime a data "desde" e as URLs de busca (só cargo, local, regime e janela de data)
-  gravar   lê JSON de candidatos, descarta inválidas/excluídas/duplicadas e grava AAAA-MM-DD-busca.md
+  filtros  lista os filtros que o LinkedIn aplicou além do pedido, a partir da URL final
+  candidatos  da listagem de todas as URLs, escolhe em rodízio quem será aberto e verificado
+  gravar   lê JSON das vagas verificadas, valida o contrato, aplica as regras de processar() e grava
+           AAAA-MM-DD-busca.md (as regras de descarte estão documentadas só em processar())
 """
 import argparse, json, re, sys
 from datetime import date, timedelta
 from pathlib import Path
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import validar_config  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 JANELA_PADRAO, JANELA_MAX = 7, 30
+MAX_VAGAS = 20  # o método pede de 10 a 20 vagas por rodada
+# Parâmetros da URL final do LinkedIn que pedimos ou que são só navegação; o resto é filtro dele.
+PARAMS_ESPERADOS = {"keywords", "location", "geoId", "f_TPR", "f_WT", "sortBy", "currentJobId",
+                    "origin", "lipi", "skipRedirect", "infoNotice", "referralSearchId"}
+POR_URL, TOTAL_CANDIDATOS = 5, 25  # candidatos abertos por URL e no total, antes da verificação
 # LinkedIn entende melhor o nome do local em inglês.
 LOCAIS = {"brasil": "Brazil", "eua": "United States", "estados unidos": "United States",
           "reino unido": "United Kingdom", "portugal": "Portugal", "canadá": "Canada",
@@ -23,9 +31,17 @@ LOCAIS = {"brasil": "Brazil", "eua": "United States", "estados unidos": "United 
           "latam": "Latin America", "américa latina": "Latin America", "mundo": "Worldwide"}
 # O LinkedIn descarta "location=" e usa a localidade da conta; o geoId fixa o país. Só entram
 # os códigos verificados no navegador (outros países seguem só com location).
+# Receita para achar e confirmar um código novo: docs/agents/busca-geoid.md
 GEO_IDS = {"Brazil": "106057199", "United States": "103644278", "United Kingdom": "101165590",
            "Latin America": "91000011"}
 ELEGIVEL = ("brasil", "latam", "mundo")  # onde a vaga remota aceita candidatos
+# Contrato do JSON que o /busca entrega ao `gravar` (valor vazio = "página não mostrou").
+VALORES = {"modalidade": ("", "remoto", "hibrido", "híbrido", "presencial"),
+           "elegibilidade": ("", *ELEGIVEL, "restrita", "nao_informada"),
+           "candidatura": ("simplificada", "externa"),
+           "status": ("", "aberta", "encerrada", "removida")}
+CHAVES = {"titulo", "empresa", "link", "local", "data", "requisitos", "trecho", "evidencia", *VALORES}
+OBRIGATORIAS = ("titulo", "empresa", "link")
 REGIMES = {"presencial": "1", "remoto": "2", "híbrido": "3", "hibrido": "3"}
 GRUPOS = (("simplificada", "Candidatura simplificada (dentro do LinkedIn)"),
           ("externa", "Candidatura externa (site da empresa / ATS)"))
@@ -106,10 +122,11 @@ def _data(v):
         return None
 
 
-def processar(vagas, excluidas_text, desde=None, hoje=None, remoto=False):
+def processar(vagas, excluidas_text, desde=None, hoje=None, remoto=False, maximo=None):
     """Devolve (aceitas, descartadas). Descartada = {titulo, empresa, link, motivo}.
     remoto=True (regime remoto): exige modalidade remota verificada e que a vaga aceite candidatos
-    do Brasil, da LATAM ou de qualquer lugar (campos "modalidade" e "elegibilidade")."""
+    do Brasil, da LATAM ou de qualquer lugar (campos "modalidade" e "elegibilidade").
+    maximo: teto de vagas aceitas; as que passam das regras além dele são cortadas na ordem de coleta."""
     linhas = _excluidas_terms(excluidas_text)
     vistos_link, vistos_te, out, fora = set(), set(), [], []
 
@@ -155,11 +172,58 @@ def processar(vagas, excluidas_text, desde=None, hoje=None, remoto=False):
         if (lk and lk in vistos_link) or te in vistos_te:
             descarta(v, "duplicada")
             continue
+        if maximo and len(out) >= maximo:
+            descarta(v, f"acima do limite de {maximo} vagas (ordem de coleta)")
+            continue
         if lk:
             vistos_link.add(lk)
         vistos_te.add(te)
         out.append(v)
     return out, fora
+
+
+def filtros_extras(url):
+    """Filtros que o LinkedIn aplicou além do pedido (ex.: f_SAL, que pode esconder vagas)."""
+    q = parse_qs(urlsplit(url).query)
+    return {k: v[0] for k, v in q.items() if k not in PARAMS_ESPERADOS}
+
+
+def selecionar(itens, excluidas_text, por_url=POR_URL, total=TOTAL_CANDIDATOS):
+    """Da listagem de todas as URLs ({origem, id, titulo, empresa, ...}, na ordem lida) ao que será
+    aberto e verificado: em rodízio entre as URLs (nenhuma domina), no máximo por_url por URL e
+    total no geral."""
+    linhas = _excluidas_terms(excluidas_text)
+    por_origem, vistos = {}, set()
+    for it in itens:
+        emp = _norm(it.get("empresa"))
+        if it.get("id") in vistos or (emp and any(emp in l for l in linhas)):
+            continue
+        vistos.add(it.get("id"))
+        por_origem.setdefault(it.get("origem"), []).append(it)
+    filas = [iter(v[:por_url]) for v in por_origem.values()]
+    out = []
+    while filas and len(out) < total:
+        for f in list(filas):
+            it = next(f, None)
+            if it is None:
+                filas.remove(f)
+            elif len(out) < total:
+                out.append(it)
+    return out
+
+
+def validar_vagas(vagas):
+    """Problemas do contrato skill -> script; lista vazia = JSON utilizável."""
+    probs = []
+    for i, v in enumerate(vagas, 1):
+        probs += [f"vaga {i}: chave desconhecida ({k!r})" for k in v if k not in CHAVES]
+        probs += [f"vaga {i}: falta {k}" for k in OBRIGATORIAS if not str(v.get(k) or "").strip()]
+        for campo, aceitos in VALORES.items():
+            valor = _norm(v.get(campo))
+            if valor not in aceitos:
+                probs.append(f"vaga {i}: {campo} inválido ({v.get(campo)!r}); aceitos: "
+                             + ", ".join(a or "(vazio)" for a in aceitos))
+    return probs
 
 
 def _grupo(v):
@@ -183,6 +247,7 @@ def render(vagas, data, descartadas=(), desde=None):
                   f"- Local: {v.get('local', '')}", f"- Data: {v.get('data', '')}",
                   f"- Modalidade: {v.get('modalidade') or 'não verificada'} "
                   f"(aceita candidatos de: {v.get('elegibilidade') or 'não confirmado'})",
+                  f"- Evidência: {v.get('evidencia') or 'não registrada'}",
                   f"- Candidatura: {chave}", f"- Link: {v.get('link', '')}",
                   f"- Trecho: {v.get('requisitos') or v.get('trecho', '')}", ""]
     if descartadas:
@@ -194,13 +259,18 @@ def render(vagas, data, descartadas=(), desde=None):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["urls", "gravar"])
+    ap.add_argument("cmd", choices=["urls", "candidatos", "filtros", "gravar"])
     ap.add_argument("--busca", default=str(ROOT / "busca.yaml"))
     ap.add_argument("--excluidas", default=str(ROOT / "private/perfil/vagas_excluidas.md"))
     ap.add_argument("--resultados")
+    ap.add_argument("--listagens", help="JSON da listagem de todas as URLs (comando 'candidatos')")
+    ap.add_argument("--url", help="URL final da página de busca (comando 'filtros')")
+    ap.add_argument("--por-url", type=int, default=POR_URL)
+    ap.add_argument("--total", type=int, default=TOTAL_CANDIDATOS)
     ap.add_argument("--saida-dir", default=str(ROOT / "private/vagas"))
     ap.add_argument("--data", default=date.today().isoformat())
     ap.add_argument("--desde", help="AAAA-MM-DD; padrão: data da última busca")
+    ap.add_argument("--max", type=int, default=MAX_VAGAS, help=f"teto de vagas gravadas (padrão {MAX_VAGAS})")
     a = ap.parse_args(argv)
     probs = validar_config.validate(a.busca, a.excluidas)
     if probs:
@@ -216,12 +286,32 @@ def main(argv=None):
         print(f"desde {desde}")
         print("\n".join(build_urls(cfg, desde, hoje)))
         return 0
+    if a.cmd == "filtros":
+        if not a.url:
+            print("--url é obrigatório em 'filtros' (a URL final, depois do redirecionamento)", file=sys.stderr)
+            return 2
+        extras = filtros_extras(a.url)
+        print("\n".join(f"{k}={v}" for k, v in extras.items()) or "nenhum filtro extra")
+        return 0
+    if a.cmd == "candidatos":
+        if not a.listagens or not Path(a.listagens).is_file():
+            print("--listagens é obrigatório em 'candidatos' (arquivo JSON existente)", file=sys.stderr)
+            return 2
+        itens = json.loads(Path(a.listagens).read_text(encoding="utf-8"))
+        sel = selecionar(itens, Path(a.excluidas).read_text(encoding="utf-8"), a.por_url, a.total)
+        print(json.dumps(sel, ensure_ascii=False, indent=1))
+        return 0
     if not a.resultados:
         print("--resultados é obrigatório em 'gravar'", file=sys.stderr)
         return 2
     vagas = json.loads(Path(a.resultados).read_text(encoding="utf-8"))
+    probs = validar_vagas(vagas)
+    if probs:
+        print("\n".join(probs), file=sys.stderr)
+        print(f"{len(probs)} problema(s) no JSON de resultados; nada foi gravado.", file=sys.stderr)
+        return 1
     final, fora = processar(vagas, Path(a.excluidas).read_text(encoding="utf-8"), desde, hoje,
-                          remoto=_norm(cfg.get("regime")) == "remoto")
+                          remoto=_norm(cfg.get("regime")) == "remoto", maximo=a.max)
     out = Path(a.saida_dir)
     out.mkdir(parents=True, exist_ok=True)
     dest = out / f"{a.data}-busca.md"

@@ -40,4 +40,23 @@ echo "Empresa Real | 2025-01-10" > "$PROJ/private/perfil/vagas_excluidas.md"
 OUT="$(doctor)"; RC=$?
 check "sucesso com ambiente pronto" test $RC -eq 0
 
+# Cenário 4: navegador do /busca (avisos; não derrubam o "Ambiente pronto" dos currículos)
+PORTA=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
+export JOBHUNT_CDP_PORTA=$PORTA JOBHUNT_CHROMIUM="$TMP/nao-existe/chromium"
+OUT="$(doctor)"; RC=$?
+check "navegador ausente não derruba o ambiente" test $RC -eq 0
+check "avisa Chromium ausente" grep -qi "aviso.*chromium" <<<"$OUT"
+check "avisa porta fechada e sugere make navegador" grep -q "make navegador" <<<"$OUT"
+check "reconhece .mcp.json com chrome-devtools" grep -q "ok .*\.mcp\.json" <<<"$OUT"
+rm -f "$PROJ/.mcp.json"
+OUT="$(doctor)"; RC=$?
+check "avisa .mcp.json ausente" grep -qi "aviso.*\.mcp\.json" <<<"$OUT"
+mkdir -p "$TMP/srv/json"; echo '{}' > "$TMP/srv/json/version"; printf '#!/bin/sh\n' > "$FAKE/chromium-ok"; chmod +x "$FAKE/chromium-ok"
+(cd "$TMP/srv" && python3 -m http.server "$PORTA" --bind 127.0.0.1 >/dev/null 2>&1) & SRV=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do curl -fs -m 1 "http://127.0.0.1:$PORTA/json/version" >/dev/null 2>&1 && break; sleep 0.3; done
+JOBHUNT_CHROMIUM="$FAKE/chromium-ok" OUT="$(doctor)"
+kill $SRV 2>/dev/null
+check "navegador de pé: ok na porta e sem aviso de Chromium" bash -c "grep -q 'ok .*127.0.0.1' <<<'$OUT' && ! grep -qi 'aviso.*chromium' <<<'$OUT'"
+unset JOBHUNT_CDP_PORTA JOBHUNT_CHROMIUM
+
 [ $FAILS -eq 0 ] && echo "TODOS OK" || { echo "$FAILS falha(s)"; exit 1; }

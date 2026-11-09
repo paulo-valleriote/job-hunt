@@ -130,8 +130,69 @@ class Processar(unittest.TestCase):
     def test_sem_exigir_remoto_nao_checa_modalidade(self):
         self.assertEqual(len(b.processar([vaga(modalidade="híbrido", elegibilidade="")], "")[0]), 1)
 
+    def test_limite_corta_pela_ordem_de_coleta_e_lista_as_cortadas(self):
+        vs = [vaga(titulo=f"Vaga {i}", link=f"https://x/{i}") for i in range(1, 6)]
+        ok, fora = b.processar(vs, "", maximo=3)
+        self.assertEqual([v["titulo"] for v in ok], ["Vaga 1", "Vaga 2", "Vaga 3"])
+        self.assertEqual([d["titulo"] for d in fora], ["Vaga 4", "Vaga 5"])
+        self.assertIn("limite de 3", fora[0]["motivo"])
+
+    def test_descartada_por_regra_nao_ocupa_lugar_no_limite(self):
+        vs = [vaga(titulo="Velha", link="https://x/0", data="2026-10-20"),
+              vaga(titulo="A", link="https://x/1"), vaga(titulo="B", link="https://x/2")]
+        ok, fora = b.processar(vs, "", desde=DESDE, maximo=2)
+        self.assertEqual([v["titulo"] for v in ok], ["A", "B"])
+        self.assertEqual([d["titulo"] for d in fora], ["Velha"])
+
     def test_aceita_dentro_da_janela(self):
         self.assertEqual(len(b.processar([vaga()], "", desde=DESDE, hoje=HOJE)[0]), 1)
+
+
+class Candidatos(unittest.TestCase):
+    """selecionar(): da listagem de todas as URLs ao que será aberto e verificado."""
+
+    def item(self, origem, n, **kw):
+        return {"origem": origem, "id": f"{origem}{n:03d}".replace("A", "1").replace("B", "2").replace("C", "3"),
+                "titulo": f"{origem}{n}", "empresa": f"Emp {origem}{n}", **kw}
+
+    def ids(self, itens):
+        return [i["titulo"] for i in itens]
+
+    def test_rodizio_entre_urls_com_teto_por_url(self):
+        itens = [self.item("A", n) for n in range(1, 9)] + [self.item("B", n) for n in range(1, 4)] \
+              + [self.item("C", n) for n in range(1, 3)]
+        sel = b.selecionar(itens, "", por_url=3, total=25)
+        self.assertEqual(self.ids(sel), ["A1", "B1", "C1", "A2", "B2", "C2", "A3", "B3"])
+
+    def test_mesmo_id_em_varias_urls_conta_uma_vez(self):
+        repetida = self.item("A", 1)
+        itens = [repetida, self.item("A", 2),
+                 {**repetida, "origem": "B"}, self.item("B", 2), self.item("B", 3)]
+        sel = b.selecionar(itens, "", por_url=2, total=25)
+        self.assertEqual(self.ids(sel), ["A1", "B2", "A2", "B3"])
+
+    def test_total_corta_o_rodizio(self):
+        itens = [self.item(o, n) for o in "ABC" for n in range(1, 5)]
+        self.assertEqual(self.ids(b.selecionar(itens, "", por_url=5, total=4)), ["A1", "B1", "C1", "A2"])
+
+    def test_empresa_excluida_nao_ocupa_lugar(self):
+        itens = [self.item("A", 1, empresa="Acme Corp"), self.item("A", 2), self.item("A", 3)]
+        sel = b.selecionar(itens, EXC_OK, por_url=2, total=25)
+        self.assertEqual(self.ids(sel), ["A2", "A3"])
+
+
+class Filtros(unittest.TestCase):
+    """filtros_extras(): o que o LinkedIn aplicou além do que pedimos."""
+
+    FINAL = ("https://www.linkedin.com/jobs/search-results/?currentJobId=4444445689&keywords=Backend%20Developer"
+             "&geoId=106057199&f_TPR=r172800&f_SAL=f_SA_id_225001%3A272001")
+
+    def test_aponta_filtro_que_nao_pedimos(self):
+        self.assertEqual(b.filtros_extras(self.FINAL), {"f_SAL": "f_SA_id_225001:272001"})
+
+    def test_url_so_com_o_pedido_nao_tem_extra(self):
+        ok = "https://www.linkedin.com/jobs/search-results/?currentJobId=1&keywords=Go&geoId=1&f_TPR=r1&f_WT=2&sortBy=DD"
+        self.assertEqual(b.filtros_extras(ok), {})
 
 
 class Render(unittest.TestCase):
@@ -149,6 +210,12 @@ class Render(unittest.TestCase):
         self.assertIn("Velha | Z | duplicada", txt)
         self.assertIn("desde 2026-11-01", txt)
         self.assertIn("- Modalidade: remoto (aceita candidatos de: brasil)", txt)
+
+    def test_mostra_a_evidencia_da_elegibilidade(self):
+        v = vaga(elegibilidade="latam", evidencia="Remote - LATAM only")
+        txt = b.render([v, vaga(titulo="Sem prova", link="https://x/7")], "2026-11-08", [], DESDE)
+        self.assertIn("- Evidência: Remote - LATAM only", txt)
+        self.assertIn("- Evidência: não registrada", txt)
 
 
 class Cli(unittest.TestCase):
@@ -210,6 +277,63 @@ class Cli(unittest.TestCase):
         self.assertIn("Acme Corp", txt.split("# Descartadas")[1])
         for palavra in ("nota", "score", "aderência", "recomend"):
             self.assertNotIn(palavra, txt.lower())
+
+    def grava(self, vagas, *args):
+        self.res.write_text(json.dumps(vagas))
+        out = self.p / "vagas"
+        r = self.run_cli("gravar", "--resultados", str(self.res), "--saida-dir", str(out),
+                         "--data", "2026-11-08", *args)
+        return r, out
+
+    def test_gravar_recusa_valor_invalido_de_enum(self):
+        # Antes: "mundial" caía em "não confirma" sem ninguém ver o erro de digitação.
+        for campo, valor in (("elegibilidade", "mundial"), ("modalidade", "remota"),
+                             ("candidatura", "interna"), ("status", "fechada")):
+            with self.subTest(campo=campo):
+                r, out = self.grava([vaga(**{campo: valor})])
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn(campo, r.stderr)
+                self.assertIn(valor, r.stderr)
+                self.assertFalse(out.exists())
+
+    def test_gravar_recusa_chave_desconhecida_ou_obrigatoria_ausente(self):
+        com_typo = {**vaga(), "elegibilidad": "mundo"}
+        r, out = self.grava([com_typo])
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("elegibilidad", r.stderr)
+        self.assertFalse(out.exists())
+        sem_link = vaga()
+        del sem_link["link"]
+        r, out = self.grava([sem_link])
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("link", r.stderr)
+
+    def test_gravar_limita_a_20_por_padrao_e_aceita_max(self):
+        vs = [vaga(titulo=f"Vaga {i}", link=f"https://x/{i}") for i in range(1, 23)]
+        r, out = self.grava(vs)
+        self.assertIn("20 vaga(s)", r.stdout)
+        txt = (out / "2026-11-08-busca.md").read_text()
+        self.assertIn("Vaga 22 | Beta SA | acima do limite de 20", txt)
+        r, out = self.grava(vs, "--max", "5")
+        self.assertIn("5 vaga(s)", r.stdout)
+
+    def test_candidatos_imprime_json_da_selecao(self):
+        itens = [{"origem": o, "id": f"{n}{i}", "titulo": f"{o}{i}", "empresa": f"E{o}{i}"}
+                 for n, o in enumerate("ABC", 1) for i in range(1, 8)]
+        lst = self.p / "lst.json"
+        lst.write_text(json.dumps(itens))
+        r = self.run_cli("candidatos", "--listagens", str(lst), "--por-url", "2", "--total", "5")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([i["titulo"] for i in json.loads(r.stdout)], ["A1", "B1", "C1", "A2", "B2"])
+        self.assertEqual(self.run_cli("candidatos", "--listagens", str(self.p / "nao_existe.json")).returncode, 2)
+
+    def test_filtros_imprime_extras_ou_diz_que_nao_ha(self):
+        r = self.run_cli("filtros", "--url", Filtros.FINAL)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("f_SAL=f_SA_id_225001:272001", r.stdout)
+        r = self.run_cli("filtros", "--url", "https://www.linkedin.com/jobs/search-results/?keywords=Go&f_TPR=r1")
+        self.assertIn("nenhum filtro extra", r.stdout)
+        self.assertEqual(self.run_cli("filtros").returncode, 2)
 
 
 if __name__ == "__main__":

@@ -45,5 +45,16 @@ if command -v pdflatex >/dev/null && [ -f "$EXAMPLE_DIR/curriculo.tex" ]; then
   rm -rf "$T"
 fi
 
+# Navegador do /busca (Chromium do WSL + MCP chrome-devtools). Só avisos: não afetam os currículos.
+warn() { echo "aviso - $1"; }
+CHROMIUM="${JOBHUNT_CHROMIUM:-/snap/bin/chromium}"
+PORTA="${JOBHUNT_CDP_PORTA:-9222}"
+if [ -x "$CHROMIUM" ]; then good "Chromium para o /busca ($CHROMIUM)"
+else warn "Chromium não encontrado em $CHROMIUM (o /busca precisa dele)"; hint "! sudo snap install chromium (ou defina JOBHUNT_CHROMIUM)"; fi
+if [ -f .mcp.json ] && grep -q '"chrome-devtools"' .mcp.json; then good ".mcp.json com chrome-devtools (aprove o MCP na 1ª vez, em /mcp)"
+else warn ".mcp.json sem o servidor chrome-devtools (o /busca não alcança o navegador)"; hint "restaure o .mcp.json do repositório"; fi
+if curl -fs -m 2 "http://127.0.0.1:$PORTA/json/version" >/dev/null 2>&1; then good "navegador de pé em 127.0.0.1:$PORTA"
+else warn "navegador fechado (127.0.0.1:$PORTA sem resposta)"; hint "rode: make navegador"; fi
+
 [ $BAD -eq 0 ] && echo "Ambiente pronto." || echo "Ambiente NÃO está pronto."
 exit $BAD
