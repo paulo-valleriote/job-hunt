@@ -1,5 +1,5 @@
 .PHONY: setup test doctor test-doctor check-config test-config \
-	test-busca test-triagem test-curriculo test-avaliador \
+	test-busca test-linkedin-vaga test-triagem test-curriculo test-avaliador \
 	test-anti-invencao test-enviei ui test-ui test-ui-curriculos navegador
 
 setup:
@@ -25,6 +25,9 @@ test-config:
 
 test-busca:
 	@python3 -m unittest tests.test_busca
+
+test-linkedin-vaga:
+	@python3 -m unittest tests.test_linkedin_vaga
 
 test-triagem:
 	@python3 -m unittest tests.test_triagem
