@@ -1,12 +1,15 @@
 .PHONY: setup test doctor test-doctor check-config test-config \
 	test-busca test-triagem test-curriculo test-avaliador \
-	test-anti-invencao test-enviei ui test-ui test-ui-curriculos
+	test-anti-invencao test-enviei ui test-ui test-ui-curriculos navegador
 
 setup:
 	@bash scripts/setup.sh
 
 test:
 	@bash tests/test_setup.sh
+
+navegador:
+	@bash scripts/abrir_navegador.sh
 
 doctor:
 	@bash scripts/doctor.sh

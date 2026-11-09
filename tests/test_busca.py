@@ -14,6 +14,7 @@ from test_validar_config import BUSCA_OK, EXC_OK  # noqa: E402
 def vaga(titulo="Dev Backend", empresa="Beta SA", link="https://www.linkedin.com/jobs/view/4487014884/", **kw):
     return {"titulo": titulo, "empresa": empresa, "link": link, "local": "Brasil (remoto)",
             "candidatura": "simplificada", "status": "aberta",
+            "modalidade": "remoto", "elegibilidade": "brasil",
             "requisitos": "Vaga remota", "data": "2026-11-05", **kw}
 
 
@@ -33,10 +34,21 @@ class Urls(unittest.TestCase):
         self.assertEqual(q["f_WT"], ["2"])
         self.assertEqual(q["f_TPR"], [f"r{8 * 86400}"])
         self.assertEqual(parse_qs(urlsplit(us[1]).query)["location"], ["United States"])
-        self.assertEqual(set(q) - {"keywords", "location", "f_WT", "f_TPR", "sortBy"}, set())
+        self.assertEqual(set(q) - {"keywords", "location", "geoId", "f_WT", "f_TPR", "sortBy"}, set())
         for u in us:
             for proibido in ("9000", "Python", "Plant"):
                 self.assertNotIn(proibido, u)
+
+    def test_geoid_do_pais_para_o_linkedin_nao_cair_na_localidade_da_conta(self):
+        # O LinkedIn descarta "location=" e usa a localidade da conta; geoId fixa o país.
+        us = b.build_urls({**CFG, "paises_fuso": ["Brasil", "EUA", "Reino Unido"]}, DESDE, HOJE)
+        geo = [parse_qs(urlsplit(u).query)["geoId"] for u in us]
+        self.assertEqual(geo, [["106057199"], ["103644278"], ["101165590"]])
+
+    def test_pais_sem_geoid_conhecido_segue_so_com_location(self):
+        q = parse_qs(urlsplit(b.build_urls({**CFG, "paises_fuso": ["Portugal"]}, DESDE, HOJE)[0]).query)
+        self.assertEqual(q["location"], ["Portugal"])
+        self.assertNotIn("geoId", q)
 
     def test_janela_desde_ultima_busca_anterior(self):
         with tempfile.TemporaryDirectory() as d:
@@ -91,6 +103,27 @@ class Processar(unittest.TestCase):
     def test_descarta_encerrada(self):
         self.assertIn("não aceita", self.motivos([vaga(status="encerrada")])[0])
 
+    def test_remoto_descarta_hibrida_e_presencial(self):
+        for m in ("híbrido", "Presencial"):
+            self.assertIn("não é remota", self.motivos([vaga(modalidade=m)], remoto=True)[0])
+
+    def test_remoto_descarta_modalidade_nao_verificada(self):
+        self.assertIn("modalidade não verificada", self.motivos([vaga(modalidade="")], remoto=True)[0])
+
+    def test_remoto_descarta_restrita_a_outro_pais(self):
+        self.assertIn("outro país", self.motivos([vaga(elegibilidade="restrita")], remoto=True)[0])
+
+    def test_remoto_descarta_elegibilidade_nao_confirmada(self):
+        for e in ("", "nao_informada"):
+            self.assertIn("não confirma", self.motivos([vaga(elegibilidade=e)], remoto=True)[0])
+
+    def test_remoto_aceita_brasil_latam_e_mundo(self):
+        vs = [vaga(elegibilidade=e, link=f"https://x/{e}", titulo=e) for e in ("brasil", "LATAM", "mundo")]
+        self.assertEqual(len(b.processar(vs, "", remoto=True)[0]), 3)
+
+    def test_sem_exigir_remoto_nao_checa_modalidade(self):
+        self.assertEqual(len(b.processar([vaga(modalidade="híbrido", elegibilidade="")], "")[0]), 1)
+
     def test_aceita_dentro_da_janela(self):
         self.assertEqual(len(b.processar([vaga()], "", desde=DESDE, hoje=HOJE)[0]), 1)
 
@@ -109,6 +142,7 @@ class Render(unittest.TestCase):
         self.assertIn("# Descartadas", txt)
         self.assertIn("Velha | Z | duplicada", txt)
         self.assertIn("desde 2026-11-01", txt)
+        self.assertIn("- Modalidade: remoto (aceita candidatos de: brasil)", txt)
 
 
 class Cli(unittest.TestCase):
