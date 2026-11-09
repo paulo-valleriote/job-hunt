@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Apoio do /busca: gate, janela de data, URLs de busca do LinkedIn, validação e arquivo final.
 
-A coleta em si é feita pelo Claude no navegador (Claude in Chrome, com login do usuário); este
-script só faz a parte determinística. Subcomandos (todos passam antes por validar_config):
+A coleta em si é feita pelo Claude no navegador (Chromium do WSL com porta de debug, via MCP
+chrome-devtools, com login do usuário); este script só faz a parte determinística. Subcomandos (todos passam antes por validar_config):
   urls     imprime a data "desde" e as URLs de busca (só cargo, local, regime e janela de data)
   gravar   lê JSON de candidatos, descarta inválidas/excluídas/duplicadas e grava AAAA-MM-DD-busca.md
 """
@@ -21,6 +21,11 @@ LOCAIS = {"brasil": "Brazil", "eua": "United States", "estados unidos": "United 
           "reino unido": "United Kingdom", "portugal": "Portugal", "canadá": "Canada",
           "canada": "Canada", "alemanha": "Germany", "europa": "European Union",
           "latam": "Latin America", "américa latina": "Latin America", "mundo": "Worldwide"}
+# O LinkedIn descarta "location=" e usa a localidade da conta; o geoId fixa o país. Só entram
+# os códigos verificados no navegador (outros países seguem só com location).
+GEO_IDS = {"Brazil": "106057199", "United States": "103644278", "United Kingdom": "101165590",
+           "Latin America": "91000011"}
+ELEGIVEL = ("brasil", "latam", "mundo")  # onde a vaga remota aceita candidatos
 REGIMES = {"presencial": "1", "remoto": "2", "híbrido": "3", "hibrido": "3"}
 GRUPOS = (("simplificada", "Candidatura simplificada (dentro do LinkedIn)"),
           ("externa", "Candidatura externa (site da empresa / ATS)"))
@@ -68,6 +73,8 @@ def build_urls(cfg, desde, hoje):
             q = {"keywords": cargo}
             if pais:
                 q["location"] = LOCAIS.get(_norm(pais), pais)
+                if q["location"] in GEO_IDS:
+                    q["geoId"] = GEO_IDS[q["location"]]
             q["f_TPR"] = f"r{segundos}"
             if wt:
                 q["f_WT"] = wt
@@ -99,8 +106,10 @@ def _data(v):
         return None
 
 
-def processar(vagas, excluidas_text, desde=None, hoje=None):
-    """Devolve (aceitas, descartadas). Descartada = {titulo, empresa, link, motivo}."""
+def processar(vagas, excluidas_text, desde=None, hoje=None, remoto=False):
+    """Devolve (aceitas, descartadas). Descartada = {titulo, empresa, link, motivo}.
+    remoto=True (regime remoto): exige modalidade remota verificada e que a vaga aceite candidatos
+    do Brasil, da LATAM ou de qualquer lugar (campos "modalidade" e "elegibilidade")."""
     linhas = _excluidas_terms(excluidas_text)
     vistos_link, vistos_te, out, fora = set(), set(), [], []
 
@@ -119,6 +128,20 @@ def processar(vagas, excluidas_text, desde=None, hoje=None):
         if status != "aberta":
             descarta(v, f"não aceita mais candidaturas ({status})")
             continue
+        if remoto:
+            mod, ele = _norm(v.get("modalidade")), _norm(v.get("elegibilidade"))
+            if not mod:
+                descarta(v, "modalidade não verificada")
+                continue
+            if mod not in ("remoto", "remote"):
+                descarta(v, f"não é remota ({mod})")
+                continue
+            if ele == "restrita":
+                descarta(v, "restrita a candidatos de outro país")
+                continue
+            if ele not in ELEGIVEL:
+                descarta(v, "não confirma aceitar candidatos do Brasil, LATAM ou de qualquer lugar")
+                continue
         if d is None:
             descarta(v, "sem data de publicação verificada")
             continue
@@ -158,6 +181,8 @@ def render(vagas, data, descartadas=(), desde=None):
             n += 1
             L += [f"## {n}. {v.get('titulo', '')}", f"- Empresa: {v.get('empresa', '')}",
                   f"- Local: {v.get('local', '')}", f"- Data: {v.get('data', '')}",
+                  f"- Modalidade: {v.get('modalidade') or 'não verificada'} "
+                  f"(aceita candidatos de: {v.get('elegibilidade') or 'não confirmado'})",
                   f"- Candidatura: {chave}", f"- Link: {v.get('link', '')}",
                   f"- Trecho: {v.get('requisitos') or v.get('trecho', '')}", ""]
     if descartadas:
@@ -185,9 +210,9 @@ def main(argv=None):
               file=sys.stderr)
         return 1
     hoje = date.fromisoformat(a.data)
+    cfg = parse_busca(Path(a.busca).read_text(encoding="utf-8"))
     desde = date.fromisoformat(a.desde) if a.desde else janela_desde(a.saida_dir, hoje)
     if a.cmd == "urls":
-        cfg = parse_busca(Path(a.busca).read_text(encoding="utf-8"))
         print(f"desde {desde}")
         print("\n".join(build_urls(cfg, desde, hoje)))
         return 0
@@ -195,7 +220,8 @@ def main(argv=None):
         print("--resultados é obrigatório em 'gravar'", file=sys.stderr)
         return 2
     vagas = json.loads(Path(a.resultados).read_text(encoding="utf-8"))
-    final, fora = processar(vagas, Path(a.excluidas).read_text(encoding="utf-8"), desde, hoje)
+    final, fora = processar(vagas, Path(a.excluidas).read_text(encoding="utf-8"), desde, hoje,
+                          remoto=_norm(cfg.get("regime")) == "remoto")
     out = Path(a.saida_dir)
     out.mkdir(parents=True, exist_ok=True)
     dest = out / f"{a.data}-busca.md"
