@@ -111,7 +111,16 @@ Regras novas:
 - O usuário precisa preencher `vagas_excluidas.md` e `busca.yaml` antes do primeiro uso real (ticket 05).
 - Como detectar o idioma da vaga (heurística simples vs. delegar ao modelo): escolha livre do implementador no ticket 08; documentar.
 - Nome exato dos pacotes do TeX Live: decidir depois de testar a compilação do template (ticket 03).
-- Avaliar `resume_matcher.py` do upstream no ticket 08.
+- ~~Avaliar `resume_matcher.py` do upstream no ticket 08.~~ Adiado: reavaliar com cerca de 5 currículos gerados (ticket 21).
+
+## Decisões da comparação com a CLI do upstream (2026-11-09)
+
+Comparação do `/curriculo` com a CLI CrewAI de `R238Company/meu-emprego-novo` (o método do `vendor/` já estava na versão atual). Já tínhamos: avaliador separado, alvo 8.5, máx. 3 revisões, parada sem melhora, entrega da melhor nota, `rating_report` e anti-invenção.
+
+- **Aceitos:** feedback do avaliador na revisão, sem `lacunas` (ticket 17); checagem de omissão (18); seção `Termos proibidos` checada (19; `Não Incluir` em prosa continua para a leitura do modelo); lint de idioma e voz, só aviso (20).
+- **Adiados:** família de vagas com `resume_matcher` e `/entrevista` (ticket 21).
+- **Mantido, sem ticket:** teto de bullets só por recência (mais bullets nas posições recentes, menos nas antigas), sem meta de páginas. Não adotar o `pad_pages.py` do upstream em nenhuma forma: preencher página com bullets antigos é a porta da invenção, e o próprio upstream abandonou a meta de 2 páginas ("o tamanho segue a cobertura da evidência").
+- **Não adotados:** fallback de PDF com `reportlab` (o `make doctor` já exige `pdflatex`) e `ingest_resume` de PDF/DOCX (nossa fonte é o `profile_truth.md`).
 - Confirmar com o usuário se `/mnt/e/busca-vagas` pode ser movido/arquivado depois da cópia (hoje: só ignorar).
 
 ## Skills úteis

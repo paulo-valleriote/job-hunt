@@ -15,9 +15,9 @@ PERFIL = """# Perfil
 - Reduzi o tempo de resposta da API em 40% com cache em Redis.
 - Mantive serviços em Python e Django com PostgreSQL.
 ## Formação
-- Universidade Exemplo, Bacharelado em Ciência da Computação, 2019
+- Bacharelado em Ciência da Computação — Universidade Exemplo — concluído em 2019
 ## Certificações
-- AWS Cloud Practitioner (Amazon), 2021
+- AWS Cloud Practitioner — Amazon — 2021
 ## Idiomas
 - Português nativo; English advanced
 """
@@ -166,6 +166,157 @@ class InglesSobrePerfilEmPortugues(unittest.TestCase):
     def test_formacao_inventada_reprova(self):
         r = en(lambda r: r["education"][0].update(studyType="PhD"))
         self.assertTrue(any("PhD" in x["fato"] for x in a.checar(r, PERFIL_PT)))
+
+
+PERFIL_MIN = """# Perfil
+## Experiência
+### Acme Corp — Desenvolvedor Backend (2020-03 a 2023-06)
+- Mantive serviços em Python.
+## Formação
+- Bacharelado em Ciência da Computação — Universidade Exemplo — concluído em 2019
+## Certificações
+- AWS Cloud Practitioner — Amazon — 2021 — situação: [válida].
+## Idiomas
+- Português nativo.
+"""
+
+RESUME_MIN = {
+    "basics": {"name": "Fulano", "label": "Desenvolvedor Backend", "summary": "Backend com Python."},
+    "work": [{"name": "Acme Corp", "position": "Desenvolvedor Backend", "startDate": "2020-03",
+              "endDate": "2023-06", "highlights": ["Mantive serviços em Python."]}],
+    "education": [{"institution": "Universidade Exemplo", "studyType": "Bacharelado",
+                   "area": "Ciência da Computação", "endDate": "2019"}],
+    "skills": [{"name": "x", "keywords": ["Python"]}],
+    "certificates": [{"name": "AWS Cloud Practitioner (valid)", "issuer": "Amazon", "date": "2021"}],
+    "languages": [{"language": "Portuguese", "fluency": "Native"}],
+}
+
+
+def min_(mut):
+    r = copy.deepcopy(RESUME_MIN); mut(r); return r
+
+
+class Omissoes(unittest.TestCase):
+    def test_perfil_minimo_completo_passa(self):
+        self.assertEqual(a.omissoes(RESUME_MIN, PERFIL_MIN), [])
+
+    def test_empresa_faltando_reprova(self):
+        r = min_(lambda r: r.update(work=[]))
+        self.assertTrue(any("Acme Corp" in x["fato"] for x in a.omissoes(r, PERFIL_MIN)))
+
+    def test_cargo_faltando_reprova(self):
+        r = min_(lambda r: r["work"][0].update(position="Diretor"))
+        self.assertTrue(any("Desenvolvedor Backend" in x["motivo"] for x in a.omissoes(r, PERFIL_MIN)))
+
+    def test_periodo_faltando_reprova(self):
+        r = min_(lambda r: r["work"][0].update(startDate="2021-01"))
+        self.assertTrue(a.omissoes(r, PERFIL_MIN))
+
+    def test_formacao_faltando_reprova(self):
+        r = min_(lambda r: r.update(education=[]))
+        self.assertTrue(any("Universidade Exemplo" in x["fato"] for x in a.omissoes(r, PERFIL_MIN)))
+
+    def test_certificacao_faltando_reprova(self):
+        r = min_(lambda r: r.update(certificates=[]))
+        self.assertTrue(any("Cloud Practitioner" in x["fato"] for x in a.omissoes(r, PERFIL_MIN)))
+
+    def test_perfil_sem_estrutura_levanta_erro(self):
+        with self.assertRaises(a.PerfilSemEstrutura):
+            a.omissoes(RESUME_MIN, "# Perfil\n## Experiência\nsem nada estruturado\n")
+
+    def test_formacao_sem_separador_em_travessao_levanta_erro(self):
+        perfil = PERFIL_MIN.replace("- Bacharelado em Ciência da Computação — Universidade Exemplo — concluído em 2019",
+                                    "- Universidade Exemplo, Bacharelado, 2019")
+        with self.assertRaises(a.PerfilSemEstrutura):
+            a.omissoes(RESUME_MIN, perfil)
+
+    def test_en_pt_fiel_nao_reprova(self):
+        self.assertEqual(a.omissoes(RESUME_EN, PERFIL_PT), [])
+
+    def test_en_pt_certificacao_omitida_reprova(self):
+        r = en(lambda r: r.update(certificates=[r["certificates"][0]]))
+        self.assertTrue(any("Cloud Practitioner" in x["fato"] for x in a.omissoes(r, PERFIL_PT)))
+
+    def test_cli_empresa_faltando_sai_1_e_relata(self):
+        d = tempfile.TemporaryDirectory(); self.addCleanup(d.cleanup)
+        pasta = Path(d.name) / "cv"; pasta.mkdir()
+        (pasta / "resume.json").write_text(json.dumps(min_(lambda r: r.update(work=[]))), encoding="utf-8")
+        perfil = Path(d.name) / "profile_truth.md"; perfil.write_text(PERFIL_MIN, encoding="utf-8")
+        self.assertEqual(a.main(["checar", str(pasta), "--perfil", str(perfil)]), 1)
+        md = (pasta / "anti_invencao.md").read_text(encoding="utf-8")
+        self.assertIn("## Omissões", md)
+        self.assertIn("Acme Corp", md.split("## Omissões")[1])
+
+    def test_cli_perfil_sem_estrutura_sai_2(self):
+        d = tempfile.TemporaryDirectory(); self.addCleanup(d.cleanup)
+        pasta = Path(d.name) / "cv"; pasta.mkdir()
+        (pasta / "resume.json").write_text(json.dumps(RESUME_MIN), encoding="utf-8")
+        perfil = Path(d.name) / "profile_truth.md"; perfil.write_text("# vazio\n", encoding="utf-8")
+        self.assertEqual(a.main(["checar", str(pasta), "--perfil", str(perfil)]), 2)
+
+
+PERFIL_NI = PERFIL_MIN + """## Termos proibidos
+- RabbitMQ
+- Go
+- Kubernetes
+"""
+
+
+class TermosProibidos(unittest.TestCase):
+    def test_termo_presente_reprova(self):
+        r = min_(lambda r: r["work"][0]["highlights"].append("Operei RabbitMQ em produção."))
+        achados, avisos = a.termos_proibidos(r, PERFIL_NI)
+        self.assertTrue(any("RabbitMQ" in x["motivo"] for x in achados))
+        self.assertEqual(avisos, [])
+
+    def test_termo_ausente_passa(self):
+        achados, avisos = a.termos_proibidos(RESUME_MIN, PERFIL_NI)
+        self.assertEqual(achados, [])
+
+    def test_palavra_contida_em_outra_nao_reprova(self):
+        r = min_(lambda r: r["basics"].update(summary="Experiência com Google Cloud e Python."))
+        achados, _ = a.termos_proibidos(r, PERFIL_NI)
+        self.assertFalse(any("Go" in x["motivo"] for x in achados))
+
+    def test_comparacao_ignora_caixa_e_acento(self):
+        r = min_(lambda r: r["basics"].update(summary="uso kubernetes no dia a dia."))
+        achados, _ = a.termos_proibidos(r, PERFIL_NI)
+        self.assertTrue(achados)
+
+    def test_secao_ausente_avisa_sem_bloquear(self):
+        achados, avisos = a.termos_proibidos(RESUME_MIN, PERFIL_MIN)
+        self.assertEqual(achados, [])
+        self.assertTrue(avisos)
+
+    def test_secao_vazia_avisa_sem_bloquear(self):
+        achados, avisos = a.termos_proibidos(RESUME_MIN, PERFIL_MIN + "## Termos proibidos\n\n")
+        self.assertEqual(achados, [])
+        self.assertTrue(avisos)
+
+    def test_comentario_de_exemplo_nao_conta_como_termo(self):
+        perfil = PERFIL_MIN + "## Termos proibidos\n<!-- exemplo: Kubernetes -->\n- RabbitMQ\n"
+        r = min_(lambda r: r["skills"][0]["keywords"].append("Kubernetes"))
+        achados, _ = a.termos_proibidos(r, perfil)
+        self.assertEqual(achados, [])
+
+    def test_comentario_de_varias_linhas_nao_vira_termo(self):
+        perfil = PERFIL_MIN + "## Termos proibidos\n<!-- Um termo\nGo\n-->\n- RabbitMQ\n"
+        achados, avisos = a.termos_proibidos(RESUME_MIN, perfil)
+        self.assertEqual(achados, [])
+        self.assertEqual(avisos, [])
+        r = min_(lambda r: r["basics"].update(summary="Um termo Go"))
+        self.assertEqual(a.termos_proibidos(r, perfil)[0], [])
+
+    def test_cli_termo_presente_sai_1_e_secao_propria(self):
+        d = tempfile.TemporaryDirectory(); self.addCleanup(d.cleanup)
+        pasta = Path(d.name) / "cv"; pasta.mkdir()
+        r = min_(lambda r: r["work"][0]["highlights"].append("Operei RabbitMQ."))
+        (pasta / "resume.json").write_text(json.dumps(r), encoding="utf-8")
+        perfil = Path(d.name) / "profile_truth.md"; perfil.write_text(PERFIL_NI, encoding="utf-8")
+        self.assertEqual(a.main(["checar", str(pasta), "--perfil", str(perfil)]), 1)
+        md = (pasta / "anti_invencao.md").read_text(encoding="utf-8")
+        self.assertIn("## Termos proibidos", md)
+        self.assertIn("RabbitMQ", md.split("\n## Termos proibidos\n")[1])
 
 
 class Cli(unittest.TestCase):

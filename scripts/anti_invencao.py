@@ -9,6 +9,16 @@ Camada determinística (esta): campos atômicos (empresa, cargo, instituição, 
 tecnologia, idioma), anos das datas e, nos textos livres (resumo, destaques), números e termos
 próprios (capitalizados no meio da frase, siglas, com dígitos). A leitura semântica de cada
 afirmação é a 2ª camada, feita pelo modelo no /curriculo (ver .claude/commands/curriculo.md).
+Camada de omissão (determinística): tudo o que o perfil afirma sobre a carreira tem de estar no resume.json.
+Experiências (`### Empresa — Cargo (AAAA-MM a AAAA-MM|atual)`): empresa, cargo e período; formação
+(`Curso — Instituição — situação`): a instituição; certificações (`Nome — emissor — ...`): o nome, sem o
+qualificador entre parênteses. Não cobre o curso da formação nem o escopo de cada cargo, e não há omissão
+"por relevância": todo item do perfil tem de aparecer. Perfil sem essa estrutura: exit 2 (erro de uso).
+
+Camada de termos proibidos (determinística): os termos da seção `## Termos proibidos` do perfil, um por linha,
+não podem aparecer em nenhum texto do resume.json. Comparação normalizada (acento, caixa) e por palavra
+inteira ("Go" não casa com "Google"). Seção ausente ou vazia gera aviso, sem bloquear.
+
 Limite: não valida identidade/contato (nome, e-mail, telefone, links) nem verbos/escopo.
 
 Currículo em inglês × perfil em português: a comparação é literal, então há (1) normalização de números
@@ -180,12 +190,140 @@ def checar(resume, perfil_texto):
     return achados
 
 
-def relatorio(achados):
-    if not achados:
-        return "# Checagem anti-invenção\n\nNenhum fato sem respaldo encontrado (camada determinística).\n"
-    linhas = ["# Checagem anti-invenção", "",
-              f"{len(achados)} fato(s) sem respaldo no profile_truth.md. Corrija ou remova antes de entregar.", ""]
-    linhas += [f"- `{x['campo']}`: {x['fato']} — {x['motivo']}" for x in achados]
+class PerfilSemEstrutura(Exception):
+    """O perfil não tem a estrutura que a checagem de omissão precisa (erro de uso, exit 2)."""
+
+
+EXPERIENCIA_RE = re.compile(r"^###\s+(.+?)\s+—\s+(.+?)\s*\(([^()]*)\)\s*$")
+PERIODO_RE = re.compile(r"^(\d{4}-\d{2})\s+a\s+(\d{4}-\d{2}|atual|presente)$", re.I)
+VALORES_ATUAL = ("", "present", "current", "atual", "presente")
+
+
+def _sem_comentarios(texto):
+    """Tira comentários HTML (inclusive os de várias linhas), que não contam como fato nem como termo."""
+    return re.sub(r"<!--.*?-->", "", str(texto), flags=re.S)
+
+
+def _secoes(perfil_texto):
+    """{título normalizado: linhas} para cada '## Título'. Ignora comentários HTML e linhas vazias."""
+    secoes, atual = {}, None
+    for bruta in _sem_comentarios(perfil_texto).splitlines():
+        if bruta.startswith("## "):
+            atual = _norm(bruta[3:])
+            secoes.setdefault(atual, [])
+            continue
+        linha = bruta.strip()
+        if atual is not None and linha:
+            secoes[atual].append(linha)
+    return secoes
+
+
+def _item(linha):
+    return linha[2:].strip() if linha.startswith("- ") else linha
+
+
+def _periodo_ok(w, ini, fim):
+    sd, ed = str(w.get("startDate") or ""), str(w.get("endDate") or "")
+    if fim.lower() in ("atual", "presente"):
+        ok_fim = _norm(ed) in VALORES_ATUAL
+    else:
+        ok_fim = ed.startswith(fim)
+    return sd.startswith(ini) and ok_fim
+
+
+def omissoes(resume, perfil_texto):
+    """Itens do perfil (experiências, formação, certificações) que não constam no resume.json."""
+    secoes = _secoes(perfil_texto)
+    linhas = [l.strip() for l in _sem_comentarios(perfil_texto).splitlines() if l.strip()]
+    exp = [m for m in (EXPERIENCIA_RE.match(l) for l in linhas) if m]
+    if not exp:
+        raise PerfilSemEstrutura("nenhuma experiência no formato '### Empresa — Cargo (AAAA-MM a AAAA-MM)'")
+    for secao in ("formacao", "certificacoes"):
+        if secao not in secoes:
+            raise PerfilSemEstrutura(f"seção '## {secao}' ausente (esperado '## Formação' e '## Certificações')")
+    formacao = [_item(l) for l in secoes["formacao"]]
+    certificacoes = [_item(l) for l in secoes["certificacoes"]]
+    for item in formacao + certificacoes:
+        if " — " not in item:
+            raise PerfilSemEstrutura(f"item sem separador ' — ': '{item}' (formato: 'Nome — Instituição — situação')")
+
+    achados = []
+    works = resume.get("work") or []
+    for m in exp:
+        empresa, cargo, datas = m.group(1), m.group(2), m.group(3)
+        fato = f"{empresa} — {cargo} ({datas})"
+        da_empresa = [w for w in works if _norm(w.get("name", "")) == _norm(empresa)]
+        do_cargo = [w for w in da_empresa if _norm(w.get("position", "")) == _norm(cargo)]
+        p = PERIODO_RE.match(datas.strip())
+        if not da_empresa:
+            motivo = "empresa não consta no resume.json"
+        elif not do_cargo:
+            motivo = f"cargo '{cargo}' não consta em '{empresa}' no resume.json"
+        elif p and not any(_periodo_ok(w, p.group(1), p.group(2)) for w in do_cargo):
+            motivo = f"período ({datas}) não confere com o resume.json"
+        else:
+            continue
+        achados.append({"campo": "omissao.work", "fato": fato, "motivo": motivo})
+
+    for item in formacao:
+        instituicao = re.split(r"\s+—\s+", item)[1].strip()
+        if not any(_norm(e.get("institution", "")) == _norm(instituicao) for e in resume.get("education") or []):
+            achados.append({"campo": "omissao.education", "fato": item,
+                            "motivo": f"instituição '{instituicao}' não consta no resume.json"})
+
+    nomes = {_norm(re.sub(r"\s*\([^()]*\)\s*$", "", str(c.get("name", "")))) for c in resume.get("certificates") or []}
+    for item in certificacoes:
+        nome = re.split(r"\s+—\s+", item)[0].strip()
+        if _norm(nome) not in nomes:
+            achados.append({"campo": "omissao.certificates", "fato": item,
+                            "motivo": "certificação não consta no resume.json"})
+    return achados
+
+
+def _textos(obj, campo=""):
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            yield from _textos(v, f"{campo}.{k}" if campo else k)
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            yield from _textos(v, f"{campo}[{i}]")
+    elif isinstance(obj, str):
+        yield campo, obj
+
+
+def termos_proibidos(resume, perfil_texto):
+    """(achados, avisos): termos da seção '## Termos proibidos' que aparecem em algum texto do resume.json."""
+    secao = _secoes(perfil_texto).get("termos proibidos")
+    termos = [_item(l) for l in secao or [] if _item(l)]
+    avisos = []
+    if secao is None:
+        avisos.append("seção '## Termos proibidos' ausente no perfil: termos proibidos não checados")
+    elif not termos:
+        avisos.append("seção '## Termos proibidos' vazia: termos proibidos não checados")
+    achados = []
+    for campo, texto in _textos(resume):
+        t = _norm(texto)
+        for termo in termos:
+            if re.search(r"(?<![a-z0-9])" + re.escape(_norm(termo)) + r"(?![a-z0-9])", t):
+                achados.append({"campo": campo, "fato": texto, "motivo": f"termo proibido '{termo}'"})
+    return achados, avisos
+
+
+def _lista(itens, vazio):
+    return [f"- `{x['campo']}`: {x['fato']} — {x['motivo']}" for x in itens] or [vazio]
+
+
+def relatorio(achados, omissoes=(), proibidos=(), avisos=()):
+    linhas = ["# Checagem anti-invenção", ""]
+    if not (achados or omissoes or proibidos):
+        linhas += ["Nenhum fato sem respaldo encontrado (camada determinística).", ""]
+    linhas += ["## Sem respaldo", ""] + _lista(achados, "Nenhum.") + [""]
+    linhas += ["## Omissões", "", "Itens do profile_truth.md que faltam no resume.json:", ""]
+    linhas += _lista(omissoes, "Nenhuma.") + [""]
+    linhas += ["## Termos proibidos", "", "Termos de `## Termos proibidos` do perfil que aparecem no resume.json:", ""]
+    linhas += _lista(proibidos, "Nenhum.") + [""]
+    if avisos:
+        linhas += ["## Avisos", ""] + [f"- {x}" for x in avisos] + [""]
     return "\n".join(linhas) + "\n"
 
 
@@ -201,11 +339,24 @@ def main(argv=None):
         resume = json.loads((pasta / "resume.json").read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         print("ERRO: resume.json inválido:", e, file=sys.stderr); return 2
-    achados = checar(resume, perfil.read_text(encoding="utf-8"))
-    (pasta / "anti_invencao.md").write_text(relatorio(achados), encoding="utf-8")
+    texto = perfil.read_text(encoding="utf-8")
+    try:
+        om = omissoes(resume, texto)
+    except PerfilSemEstrutura as e:
+        print("ERRO: perfil sem a estrutura esperada:", e, file=sys.stderr); return 2
+    achados = checar(resume, texto)
+    proibidos, avisos = termos_proibidos(resume, texto)
+    (pasta / "anti_invencao.md").write_text(relatorio(achados, om, proibidos, avisos), encoding="utf-8")
     for x in achados:
         print(f"SEM RESPALDO: {x['campo']}: {x['fato']} ({x['motivo']})", file=sys.stderr)
-    return 1 if achados else 0
+    for x in om:
+        print(f"OMISSÃO: {x['fato']} ({x['motivo']})", file=sys.stderr)
+    # o termo proibido não vai para o stderr (logs): ele fica só no anti_invencao.md, na pasta privada
+    for x in proibidos:
+        print(f"TERMO PROIBIDO em {x['campo']} (ver anti_invencao.md)", file=sys.stderr)
+    for x in avisos:
+        print("AVISO:", x, file=sys.stderr)
+    return 1 if (achados or om or proibidos) else 0
 
 
 if __name__ == "__main__":
