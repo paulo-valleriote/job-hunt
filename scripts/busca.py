@@ -26,6 +26,13 @@ LOCAIS = {"brasil": "Brazil", "eua": "United States", "estados unidos": "United 
 GEO_IDS = {"Brazil": "106057199", "United States": "103644278", "United Kingdom": "101165590",
            "Latin America": "91000011"}
 ELEGIVEL = ("brasil", "latam", "mundo")  # onde a vaga remota aceita candidatos
+# Contrato do JSON que o /busca entrega ao `gravar` (valor vazio = "página não mostrou").
+VALORES = {"modalidade": ("", "remoto", "hibrido", "híbrido", "presencial"),
+           "elegibilidade": ("", *ELEGIVEL, "restrita", "nao_informada"),
+           "candidatura": ("simplificada", "externa"),
+           "status": ("", "aberta", "encerrada", "removida")}
+CHAVES = {"titulo", "empresa", "link", "local", "data", "requisitos", "trecho", "evidencia", *VALORES}
+OBRIGATORIAS = ("titulo", "empresa", "link")
 REGIMES = {"presencial": "1", "remoto": "2", "híbrido": "3", "hibrido": "3"}
 GRUPOS = (("simplificada", "Candidatura simplificada (dentro do LinkedIn)"),
           ("externa", "Candidatura externa (site da empresa / ATS)"))
@@ -162,6 +169,20 @@ def processar(vagas, excluidas_text, desde=None, hoje=None, remoto=False):
     return out, fora
 
 
+def validar_vagas(vagas):
+    """Problemas do contrato skill -> script; lista vazia = JSON utilizável."""
+    probs = []
+    for i, v in enumerate(vagas, 1):
+        probs += [f"vaga {i}: chave desconhecida ({k!r})" for k in v if k not in CHAVES]
+        probs += [f"vaga {i}: falta {k}" for k in OBRIGATORIAS if not str(v.get(k) or "").strip()]
+        for campo, aceitos in VALORES.items():
+            valor = _norm(v.get(campo))
+            if valor not in aceitos:
+                probs.append(f"vaga {i}: {campo} inválido ({v.get(campo)!r}); aceitos: "
+                             + ", ".join(a or "(vazio)" for a in aceitos))
+    return probs
+
+
 def _grupo(v):
     return "externa" if _norm(v.get("candidatura")) == "externa" else "simplificada"
 
@@ -183,6 +204,7 @@ def render(vagas, data, descartadas=(), desde=None):
                   f"- Local: {v.get('local', '')}", f"- Data: {v.get('data', '')}",
                   f"- Modalidade: {v.get('modalidade') or 'não verificada'} "
                   f"(aceita candidatos de: {v.get('elegibilidade') or 'não confirmado'})",
+                  f"- Evidência: {v.get('evidencia') or 'não registrada'}",
                   f"- Candidatura: {chave}", f"- Link: {v.get('link', '')}",
                   f"- Trecho: {v.get('requisitos') or v.get('trecho', '')}", ""]
     if descartadas:
@@ -220,6 +242,11 @@ def main(argv=None):
         print("--resultados é obrigatório em 'gravar'", file=sys.stderr)
         return 2
     vagas = json.loads(Path(a.resultados).read_text(encoding="utf-8"))
+    probs = validar_vagas(vagas)
+    if probs:
+        print("\n".join(probs), file=sys.stderr)
+        print(f"{len(probs)} problema(s) no JSON de resultados; nada foi gravado.", file=sys.stderr)
+        return 1
     final, fora = processar(vagas, Path(a.excluidas).read_text(encoding="utf-8"), desde, hoje,
                           remoto=_norm(cfg.get("regime")) == "remoto")
     out = Path(a.saida_dir)

@@ -150,6 +150,12 @@ class Render(unittest.TestCase):
         self.assertIn("desde 2026-11-01", txt)
         self.assertIn("- Modalidade: remoto (aceita candidatos de: brasil)", txt)
 
+    def test_mostra_a_evidencia_da_elegibilidade(self):
+        v = vaga(elegibilidade="latam", evidencia="Remote - LATAM only")
+        txt = b.render([v, vaga(titulo="Sem prova", link="https://x/7")], "2026-11-08", [], DESDE)
+        self.assertIn("- Evidência: Remote - LATAM only", txt)
+        self.assertIn("- Evidência: não registrada", txt)
+
 
 class Cli(unittest.TestCase):
     def setUp(self):
@@ -210,6 +216,36 @@ class Cli(unittest.TestCase):
         self.assertIn("Acme Corp", txt.split("# Descartadas")[1])
         for palavra in ("nota", "score", "aderência", "recomend"):
             self.assertNotIn(palavra, txt.lower())
+
+    def grava(self, vagas, *args):
+        self.res.write_text(json.dumps(vagas))
+        out = self.p / "vagas"
+        r = self.run_cli("gravar", "--resultados", str(self.res), "--saida-dir", str(out),
+                         "--data", "2026-11-08", *args)
+        return r, out
+
+    def test_gravar_recusa_valor_invalido_de_enum(self):
+        # Antes: "mundial" caía em "não confirma" sem ninguém ver o erro de digitação.
+        for campo, valor in (("elegibilidade", "mundial"), ("modalidade", "remota"),
+                             ("candidatura", "interna"), ("status", "fechada")):
+            with self.subTest(campo=campo):
+                r, out = self.grava([vaga(**{campo: valor})])
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn(campo, r.stderr)
+                self.assertIn(valor, r.stderr)
+                self.assertFalse(out.exists())
+
+    def test_gravar_recusa_chave_desconhecida_ou_obrigatoria_ausente(self):
+        com_typo = {**vaga(), "elegibilidad": "mundo"}
+        r, out = self.grava([com_typo])
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("elegibilidad", r.stderr)
+        self.assertFalse(out.exists())
+        sem_link = vaga()
+        del sem_link["link"]
+        r, out = self.grava([sem_link])
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("link", r.stderr)
 
 
 if __name__ == "__main__":
