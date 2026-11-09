@@ -23,7 +23,8 @@ LOCAIS = {"brasil": "Brazil", "eua": "United States", "estados unidos": "United 
           "latam": "Latin America", "américa latina": "Latin America", "mundo": "Worldwide"}
 # O LinkedIn descarta "location=" e usa a localidade da conta; o geoId fixa o país. Só entram
 # os códigos verificados no navegador (outros países seguem só com location).
-GEO_IDS = {"Brazil": "106057199", "United States": "103644278", "United Kingdom": "101165590"}
+GEO_IDS = {"Brazil": "106057199", "United States": "103644278", "United Kingdom": "101165590",
+           "Latin America": "91000011"}
 ELEGIVEL = ("brasil", "latam", "mundo")  # onde a vaga remota aceita candidatos
 REGIMES = {"presencial": "1", "remoto": "2", "híbrido": "3", "hibrido": "3"}
 GRUPOS = (("simplificada", "Candidatura simplificada (dentro do LinkedIn)"),

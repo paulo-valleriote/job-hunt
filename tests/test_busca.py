@@ -45,6 +45,12 @@ class Urls(unittest.TestCase):
         geo = [parse_qs(urlsplit(u).query)["geoId"] for u in us]
         self.assertEqual(geo, [["106057199"], ["103644278"], ["101165590"]])
 
+    def test_america_latina_usa_o_geoid_da_regiao(self):
+        # 91000011 = "América Latina" no LinkedIn (91000007 é Europa, Oriente Médio e África).
+        for nome in ("América Latina", "LATAM"):
+            q = parse_qs(urlsplit(b.build_urls({**CFG, "paises_fuso": [nome]}, DESDE, HOJE)[0]).query)
+            self.assertEqual((q["location"], q["geoId"]), (["Latin America"], ["91000011"]))
+
     def test_pais_sem_geoid_conhecido_segue_so_com_location(self):
         q = parse_qs(urlsplit(b.build_urls({**CFG, "paises_fuso": ["Portugal"]}, DESDE, HOJE)[0]).query)
         self.assertEqual(q["location"], ["Portugal"])
