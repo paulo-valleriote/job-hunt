@@ -26,7 +26,7 @@ Pré-requisitos: WSL2/Linux, `python3` e o CLI `claude` (Claude Code).
 
 `/busca` e `/triagem` **recusam rodar** enquanto estes arquivos tiverem placeholders. Teste com `make check-config`.
 
-- **`busca.yaml`** (na raiz, ignorado pelo git): `cp busca.example.yaml busca.yaml` e troque cada valor `EXEMPLO ...`. Campos: `cargos_alvo`, `senioridade`, `regime`, `paises_fuso`, `faixa_salarial_minima`, `stack_desejada`, `deal_breakers`, `idiomas_aceitos`. Os comentários do modelo explicam cada um.
+- **`busca.yaml`** (na raiz, ignorado pelo git): `cp busca.example.yaml busca.yaml` e troque cada valor `EXEMPLO ...`. Campos: `cargos_alvo`, `senioridade`, `regime`, `paises_fuso`, `faixa_salarial_minima`, `stack_desejada`, `deal_breakers`, `idiomas_aceitos` e o opcional `titulos_excluidos` (termos de nível, ex.: Staff, Principal, Lead, Head, Director: a vaga cujo título contém um deles, como palavra inteira e sem diferença de caixa ou acento, é descartada pelo `/busca` antes de ser aberta; "Senior" fica de fora de propósito, para você ainda ver essas vagas; ausente ou vazio, nada muda). Os comentários do modelo explicam cada um.
 - **`private/perfil/vagas_excluidas.md`**: empresas, recrutadores e origens que você quer evitar, com datas reais. Troque "Empresa A", "Recrutadora C", "AAAA-MM-DD" e similares do modelo pelos seus dados.
 - **`private/perfil/profile_truth.md`**: a única fonte de fatos sobre você. Currículos e triagens só afirmam o que está aqui.
 

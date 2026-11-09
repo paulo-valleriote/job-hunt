@@ -144,6 +144,38 @@ class Processar(unittest.TestCase):
         self.assertEqual([v["titulo"] for v in ok], ["A", "B"])
         self.assertEqual([d["titulo"] for d in fora], ["Velha"])
 
+    def test_titulo_com_termo_excluido_vai_para_descartadas_com_motivo(self):
+        vs = [vaga("Staff Engineer", link="https://x/1"), vaga("PRINCIPAL Software Engineer", link="https://x/2"),
+              vaga("Engenheiro Líder Técnico", link="https://x/3"), vaga("Dev Backend", link="https://x/4")]
+        ok, fora = b.processar(vs, "", titulos_excluidos=["Staff", "Principal", "líder"])
+        self.assertEqual([v["titulo"] for v in ok], ["Dev Backend"])
+        self.assertEqual(len(fora), 3)
+        self.assertTrue(all("nível acima" in d["motivo"] for d in fora), fora)
+        self.assertIn("'Staff'", fora[0]["motivo"])
+
+    def test_termo_ignora_acento_e_caixa_e_exige_palavra_inteira(self):
+        vs = [vaga("Head de Engenharia", link="https://x/1"), vaga("Lider Tecnico", link="https://x/2"),
+              vaga("Leadership Coach Dev", link="https://x/3"), vaga("Overhead Dev", link="https://x/4")]
+        ok, fora = b.processar(vs, "", titulos_excluidos=["head", "Líder Técnico", "Lead"])
+        self.assertEqual([v["titulo"] for v in ok], ["Leadership Coach Dev", "Overhead Dev"])
+        self.assertEqual(len(fora), 2)
+
+    def test_senior_sem_termo_da_lista_continua_aceita(self):
+        vs = [vaga("Senior Backend Engineer", link="https://x/1"), vaga("Sr. Python Developer", link="https://x/2")]
+        ok, fora = b.processar(vs, "", titulos_excluidos=["Staff", "Principal", "Lead", "Head", "Director"])
+        self.assertEqual(len(ok), 2)
+        self.assertEqual(fora, [])
+
+    def test_senior_com_termo_da_lista_e_descartada(self):
+        ok, fora = b.processar([vaga("Senior Staff Engineer")], "", titulos_excluidos=["Staff"])
+        self.assertEqual(ok, [])
+        self.assertEqual(len(fora), 1)
+
+    def test_campo_ausente_ou_vazio_nao_muda_o_comportamento(self):
+        vs = [vaga("Staff Engineer", link="https://x/1"), vaga("Principal Engineer", link="https://x/2")]
+        for kw in ({}, {"titulos_excluidos": []}, {"titulos_excluidos": None}, {"titulos_excluidos": [""]}):
+            self.assertEqual(len(b.processar(vs, "", **kw)[0]), 2, kw)
+
     def test_aceita_dentro_da_janela(self):
         self.assertEqual(len(b.processar([vaga()], "", desde=DESDE, hoje=HOJE)[0]), 1)
 
@@ -179,6 +211,17 @@ class Candidatos(unittest.TestCase):
         itens = [self.item("A", 1, empresa="Acme Corp"), self.item("A", 2), self.item("A", 3)]
         sel = b.selecionar(itens, EXC_OK, por_url=2, total=25)
         self.assertEqual(self.ids(sel), ["A2", "A3"])
+
+
+class TitulosExcluidos(unittest.TestCase):
+    """O campo titulos_excluidos do busca.yaml, lido pelos comandos candidatos e gravar."""
+
+    def test_parse_aceita_lista_valor_unico_e_ausente(self):
+        self.assertEqual(b.titulos_excluidos(b.parse_busca("titulos_excluidos:\n  - Staff\n  - Lead\n")),
+                         ["Staff", "Lead"])
+        self.assertEqual(b.titulos_excluidos(b.parse_busca("titulos_excluidos: Staff\n")), ["Staff"])
+        self.assertEqual(b.titulos_excluidos(b.parse_busca("titulos_excluidos:\nregime: remoto\n")), [])
+        self.assertEqual(b.titulos_excluidos(b.parse_busca("regime: remoto\n")), [])
 
 
 class Filtros(unittest.TestCase):
@@ -326,6 +369,30 @@ class Cli(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual([i["titulo"] for i in json.loads(r.stdout)], ["A1", "B1", "C1", "A2", "B2"])
         self.assertEqual(self.run_cli("candidatos", "--listagens", str(self.p / "nao_existe.json")).returncode, 2)
+
+    def test_candidatos_descarta_por_titulo_antes_da_verificacao(self):
+        itens = [{"origem": "A", "id": str(n), "titulo": t, "empresa": f"E{n}"}
+                 for n, t in enumerate(["Staff Engineer", "Senior Backend Engineer", "Dev Pleno", "Head of Eng"], 1)]
+        lst = self.p / "lst.json"
+        lst.write_text(json.dumps(itens))
+        busca = BUSCA_OK + "titulos_excluidos:\n  - Staff\n  - Head\n"
+        r = self.run_cli("candidatos", "--listagens", str(lst), busca=busca)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([i["titulo"] for i in json.loads(r.stdout)], ["Senior Backend Engineer", "Dev Pleno"])
+        self.assertIn("Staff Engineer", r.stderr)
+        r = self.run_cli("candidatos", "--listagens", str(lst))  # sem o campo: nada muda
+        self.assertEqual(len(json.loads(r.stdout)), 4)
+
+    def test_gravar_lista_a_vaga_de_nivel_acima_em_descartadas(self):
+        self.res.write_text(json.dumps([vaga("Staff Engineer", link="https://x/1"),
+                                        vaga("Senior Engineer", link="https://x/2")]))
+        busca = BUSCA_OK + "titulos_excluidos:\n  - Staff\n"
+        r = self.run_cli("gravar", "--resultados", str(self.res), "--saida-dir", str(self.p / "out"),
+                         "--data", "2026-11-08", "--desde", "2026-11-01", busca=busca)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        txt = (self.p / "out/2026-11-08-busca.md").read_text()
+        self.assertIn("## 1. Senior Engineer", txt)
+        self.assertIn("- Staff Engineer | Beta SA | nível acima do alvo", txt)
 
     def test_filtros_imprime_extras_ou_diz_que_nao_ha(self):
         r = self.run_cli("filtros", "--url", Filtros.FINAL)
