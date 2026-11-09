@@ -4,11 +4,18 @@
 # faz /busca e /triagem recusarem rodar (scripts/validar_config.py).
 # Formato aceito: "chave: valor" ou "chave:" seguido de itens "  - valor".
 
-# Cargos que você procura (um por linha).
+# Quem usa cada campo:
+#   - cargos_alvo, regime e paises_fuso montam as URLs de busca do /busca (cargo x país).
+#   - senioridade, stack_desejada e deal_breakers NÃO filtram a busca: o /busca não os lê.
+#     Quem os lê é o /triagem, como contexto para a nota e para avisar de deal breaker.
+
+# Cargos que você procura (um por linha). Cada cargo gera uma URL por país: mais cargos
+# diluem os 25 candidatos por rodada. Evite cargos que se repetem.
 cargos_alvo:
   - EXEMPLO Engenheiro de Software Backend
 
-# Nível: junior, pleno, senior, etc.
+# Nível: junior, pleno, senior, etc. É texto livre lido só pelo /triagem; diga também como
+# tratar o nível acima do seu (ex.: "aceito mid-senior só com match alto; senior recebe nota baixa").
 senioridade: EXEMPLO pleno
 
 # Regime: remoto, híbrido ou presencial.
@@ -21,11 +28,13 @@ paises_fuso:
 # Salário mínimo mensal (número) e a moeda no comentário, se quiser.
 faixa_salarial_minima: EXEMPLO 0
 
-# Tecnologias desejadas.
+# Tecnologias desejadas (só o /triagem usa). Liste o que o seu perfil sustenta: stack sem
+# experiência real gera vaga com muita lacuna e nota baixa.
 stack_desejada:
   - EXEMPLO Python
 
-# Qualquer item aqui descarta a vaga.
+# O /triagem marca com destaque a vaga que bater com qualquer item (a busca não descarta
+# por aqui). Serve para modalidade, tipo de cargo (ex.: Staff, Lead) e anos exigidos (ex.: 8+ years).
 deal_breakers:
   - EXEMPLO plantão 24h
 
