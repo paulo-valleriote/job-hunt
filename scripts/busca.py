@@ -346,9 +346,42 @@ def render(vagas, data, descartadas=(), desde=None, falhas=()):
         L += ["# Descartadas", ""]
         L += [f"- {d['titulo']} | {d['empresa']} | {d['motivo']} | {d['link']}" for d in descartadas]
         L.append("")
-    if falhas:
-        L += ["# Falhas de fontes", ""]
-        L += [f"- {x['fonte']}: {x['motivo']}" for x in falhas]
+    L += resumo(vagas, descartadas, falhas).split("\n")
+    return "\n".join(L)
+
+
+def _motivo_chave(motivo):
+    """Agrupa o motivo do descarte sem os trechos variáveis (datas, título, data limite)."""
+    if motivo.startswith("publicada em"):
+        return "publicada antes da janela"
+    return motivo.split(" (")[0]
+
+
+def _contagem(linhas):
+    cont = {}
+    for k in linhas:
+        cont[k] = cont.get(k, 0) + 1
+    return [f"- {k}: {n}" for k, n in sorted(cont.items())] or ["- nenhuma"]
+
+
+def resumo(vagas, descartadas=(), falhas=()):
+    """Fechamento da rodada: vagas mantidas por fonte, descartes por motivo e falhas de fontes.
+    Tokens que deram 404 vão em seção própria, para o usuário revisar fontes_ats.json.
+    Só conta e relata: sem nota, ordem ou recomendação."""
+    L = ["# Resumo da rodada", "", "Vagas mantidas por fonte:"]
+    L += _contagem(_fonte_de(v) for v in vagas)
+    L += ["", "Descartadas por motivo:"]
+    L += _contagem(_motivo_chave(d["motivo"]) for d in descartadas)
+    L.append("")
+    fora_404 = [x for x in falhas if x["motivo"] == "HTTP 404"]
+    outras = [x for x in falhas if x["motivo"] != "HTTP 404"]
+    if outras:
+        L += ["# Fontes com falha", ""]
+        L += [f"- {x['fonte']}: {x['motivo']}" for x in outras]
+        L.append("")
+    if fora_404:
+        L += ["# Tokens com 404", "", "Revise estes tokens em fontes_ats.json (a empresa pode ter mudado de ATS):", ""]
+        L += [f"- {x['fonte']}: {x['motivo']}" for x in fora_404]
         L.append("")
     return "\n".join(L)
 
@@ -433,6 +466,7 @@ def main(argv=None):
     dest = out / f"{a.data}-busca.md"
     dest.write_text(render(final, a.data, fora, desde, falhas), encoding="utf-8")
     print(f"{len(final)} vaga(s) gravada(s) em {dest}; {len(fora)} descartada(s)")
+    print(resumo(final, fora, falhas))
     return 0
 
 

@@ -892,8 +892,74 @@ class ColetadasNaCli(unittest.TestCase):
             txt = (out / "2026-11-08-busca.md").read_text(encoding="utf-8")
             self.assertIn("Dev Gh", txt)
             self.assertIn("- Fonte: greenhouse:gama", txt)
-            self.assertIn("# Falhas de fontes", txt)
+            self.assertIn("# Tokens com 404", txt)
             self.assertIn("greenhouse:x: HTTP 404", txt)
+            self.assertIn("# Resumo da rodada", txt)
+
+
+class Resumo(unittest.TestCase):
+    def setUp(self):
+        self.vs = [vaga(titulo="Dev Gh", empresa="Gama", link="https://x/gh1", fonte="greenhouse:gama"),
+                   vaga(titulo="Dev Gh 2", empresa="Gama", link="https://x/gh2", fonte="greenhouse:gama"),
+                   vaga(titulo="Dev Li", empresa="Beta", link="https://x/li1")]
+        self.fora = [{"titulo": "A", "empresa": "Z", "link": "https://x/a",
+                      "motivo": "publicada em 2026-10-02, antes de 2026-11-01"},
+                     {"titulo": "B", "empresa": "Y", "link": "https://x/b",
+                      "motivo": "publicada em 2026-09-30, antes de 2026-11-01"},
+                     {"titulo": "C", "empresa": "X", "link": "https://x/c",
+                      "motivo": "nível acima do alvo (título contém 'Staff')"}]
+        self.falhas = [{"fonte": "greenhouse:velho", "motivo": "HTTP 404"},
+                       {"fonte": "ashby:lento", "motivo": "timeout"}]
+
+    def test_conta_mantidas_por_fonte_e_descartes_por_motivo(self):
+        txt = b.resumo(self.vs, self.fora, [])
+        self.assertIn("- greenhouse: 2", txt)
+        self.assertIn("- linkedin: 1", txt)
+        self.assertIn("- publicada antes da janela: 2", txt)
+        self.assertIn("- nível acima do alvo: 1", txt)
+
+    def test_fonte_com_falha_e_token_404_em_secoes_separadas(self):
+        txt = b.resumo(self.vs, self.fora, self.falhas)
+        secao_404 = txt.split("# Tokens com 404")[1]
+        self.assertIn("- greenhouse:velho: HTTP 404", secao_404)
+        self.assertNotIn("ashby:lento", secao_404)
+        secao_falha = txt.split("# Fontes com falha")[1].split("# Tokens com 404")[0]
+        self.assertIn("- ashby:lento: timeout", secao_falha)
+        self.assertNotIn("greenhouse:velho", secao_falha)
+
+    def test_sem_falhas_nao_mostra_secoes_de_falha(self):
+        txt = b.resumo(self.vs, self.fora, [])
+        self.assertNotIn("# Fontes com falha", txt)
+        self.assertNotIn("# Tokens com 404", txt)
+
+    def test_resumo_nao_classifica_nem_recomenda(self):
+        txt = b.resumo(self.vs, self.fora, self.falhas).lower()
+        for palavra in ("nota", "score", "aderência", "recomend", "melhor", "ordem"):
+            self.assertNotIn(palavra, txt)
+
+    def test_render_termina_com_o_resumo_da_rodada(self):
+        txt = b.render(self.vs, "2026-11-08", self.fora, DESDE, self.falhas)
+        self.assertIn("# Resumo da rodada", txt)
+        self.assertIn("# Tokens com 404", txt)
+        self.assertLess(txt.index("# Descartadas"), txt.index("# Resumo da rodada"))
+
+    def test_cli_imprime_o_resumo_no_stdout(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            exc, res, bf, col = p / "exc.md", p / "res.json", p / "busca.yaml", p / "col.json"
+            exc.write_text(EXC_OK)
+            res.write_text(json.dumps([vaga()]))
+            bf.write_text(BUSCA_OK)
+            col.write_text(json.dumps({"vagas": [], "falhas": [{"fonte": "lever:morto", "motivo": "HTTP 404"}]}))
+            r = subprocess.run([sys.executable, str(ROOT / "scripts/busca.py"), "gravar",
+                                "--resultados", str(res), "--coletadas", str(col),
+                                "--saida-dir", str(p / "s"), "--data", "2026-11-08", "--desde", "2026-11-01",
+                                "--busca", str(bf), "--excluidas", str(exc)],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("# Tokens com 404", r.stdout)
+            self.assertIn("- lever:morto: HTTP 404", r.stdout)
+            self.assertIn("- linkedin: 1", r.stdout)
 
 
 if __name__ == "__main__":
