@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:boards-api.greenhouse.io)",
+      "WebFetch(domain:api.lever.co)",
+      "WebFetch(domain:api.ashbyhq.com)",
+      "WebFetch(domain:himalayas.app)"
+    ]
+  }
+}
