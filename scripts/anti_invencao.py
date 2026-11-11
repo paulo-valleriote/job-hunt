@@ -64,6 +64,8 @@ GLOSSARIO = {
     "computer systems": ("sistemas de computacao",),
     "full stack development": ("desenvolvimento full stack",),
     "technologist degree": ("tecnologo",),
+    "technology degree": ("tecnologo",),
+    "technology degree (in progress)": ("tecnologo", "em andamento"),
     "technologist degree (in progress)": ("tecnologo", "em andamento"),
 }
 STATUS_CERT = {"valid": "valida", "expired": "expirada", "in progress": "em andamento"}

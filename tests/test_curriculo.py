@@ -49,6 +49,107 @@ class Idioma(unittest.TestCase):
     def test_empate_cai_em_en(self):
         self.assertEqual(c.detectar_idioma("Python Django"), "en")
 
+    def test_espanhol_cai_em_en(self):
+        self.assertEqual(c.detectar_idioma(
+            "Buscamos un desarrollador con experiencia en el equipo de trabajo y nuestros proyectos de desarrollo"), "en")
+
+    def test_idioma_desconhecido_cai_em_en(self):
+        self.assertEqual(c.detectar_idioma("Nous recherchons un développeur avec de l'expérience"), "en")
+
+
+TEX = ("\\setlist[itemize]{leftmargin=1.2em,itemsep=1pt,topsep=2pt}\n"
+       "\\textbf{Dev}, Acme \\hfill 2025-02 -- Atual\\\\\n\\begin{itemize}\n  \\item a\n\\end{itemize}\n"
+       "\\textbf{Dev}, Beta \\hfill 2024-01 -- 2025-01\\\\\n\\begin{itemize}\n  \\item b\n\\end{itemize}\n"
+       "\\textbf{Curso}, Uni \\hfill 2023 -- Atual\\\\\n")
+
+
+class AjustarLatex(unittest.TestCase):
+    def test_itens_mais_juntos(self):
+        self.assertIn("itemsep=0pt,parsep=0pt", c.ajustar_latex(TEX))
+
+    def test_cabecalho_sem_linha_vazia_antes_da_lista(self):
+        self.assertNotIn("\\\\\n\\begin{itemize}", c.ajustar_latex(TEX))
+
+    def test_espaco_so_entre_experiencias(self):
+        out = c.ajustar_latex(TEX)
+        self.assertEqual(out.count("\\vspace{9pt}"), 1)
+        self.assertLess(out.index("Acme"), out.index("\\vspace{9pt}"))
+        self.assertLess(out.index("\\vspace{9pt}"), out.index("Beta"))
+
+    def test_formacao_sem_lista_fica_intacta(self):
+        self.assertIn("\\textbf{Curso}, Uni \\hfill 2023 -- Atual\\\\", c.ajustar_latex(TEX))
+
+    def test_tex_sem_padrao_passa_inalterado(self):
+        self.assertEqual(c.ajustar_latex("\\documentclass{article}"), "\\documentclass{article}")
+
+
+TEX_FULL = ("\\section*{Resumo}\nx\n\\section*{Experiência}\n"
+            "\\textbf{Dev}, Acme \\hfill 2025-02 -- Atual\\\\\n\\begin{itemize}\n  \\item a\n\\end{itemize}\n"
+            "\\section*{Competências}\nk\n\\section*{Formação}\n"
+            "\\textbf{Tecnólogo em Sistemas}, UFF \\hfill 2023-07 -- Atual\\\\\n"
+            "\\textbf{Curso Full Stack em }, Cubos \\hfill 2022 -- 2023\\\\\n"
+            "\\textbf{ em Cloud}, Escola \\hfill 2021 -- 2022\\\\\n"
+            "\\section*{Certificações}\n\\section*{Idiomas}\nPortuguês (Nativo)\n")
+
+
+class IdiomaDoLatex(unittest.TestCase):
+    def test_en_traduz_rotulos_e_atual(self):
+        out = c.ajustar_latex(TEX_FULL, "en")
+        for en in ("Summary", "Experience", "Skills", "Education", "Certifications", "Languages"):
+            self.assertIn("\\section*{%s}" % en, out)
+        self.assertNotIn("Experiência", out)
+        self.assertIn("-- Present", out)
+        self.assertNotIn("Atual", out)
+
+    def test_pt_mantem_rotulos(self):
+        out = c.ajustar_latex(TEX_FULL, "pt")
+        self.assertIn("\\section*{Experiência}", out)
+        self.assertIn("-- Atual", out)
+
+    def test_formacao_sem_area_nao_deixa_em_solto(self):
+        for idioma in ("pt", "en"):
+            out = c.ajustar_latex(TEX_FULL, idioma)
+            self.assertIn("\\textbf{Curso Full Stack}, Cubos", out)
+            self.assertNotIn(" em }", out)
+
+    def test_formacao_sem_tipo_nao_comeca_com_em(self):
+        self.assertIn("\\textbf{Cloud}, Escola", c.ajustar_latex(TEX_FULL, "pt"))
+
+    def test_formacao_com_tipo_e_area_em_en_vira_in(self):
+        self.assertIn("\\textbf{Tecnólogo in Sistemas}", c.ajustar_latex(TEX_FULL, "en"))
+        self.assertIn("\\textbf{Tecnólogo em Sistemas}", c.ajustar_latex(TEX_FULL, "pt"))
+
+    def test_em_fora_da_formacao_fica_intacto(self):
+        tex = "\\section*{Resumo}\nTrabalho em equipe\n" + TEX_FULL
+        self.assertIn("Trabalho em equipe", c.ajustar_latex(tex, "en"))
+
+
+TEX_CERT = ("\\section*{Certificações}\n\\begin{itemize}\n"
+            "  \\item AWS Certified Developer – Associate (Amazon Web Services (AWS))\n"
+            "  \\item AWS Certified Cloud Practitioner (expired 08/2026) (Amazon Web Services (AWS))\n"
+            "  \\item Curso X (in progress)\n  \\item Sem emissor\n\\end{itemize}\n"
+            "\\section*{Idiomas}\n  \\item fora da seção (valid) (x)\n")
+
+
+class Certificacoes(unittest.TestCase):
+    def test_situacao_sai_dos_parenteses_e_vai_para_a_direita(self):
+        out = c.ajustar_latex(TEX_CERT, "en")
+        self.assertIn("  \\item AWS Certified Cloud Practitioner, Amazon Web Services (AWS) \\hfill expired 08/2026", out)
+        self.assertNotIn("(expired", out)
+
+    def test_pt_traduz_a_situacao(self):
+        out = c.ajustar_latex(TEX_CERT, "pt")
+        self.assertIn("\\hfill expirada em 08/2026", out)
+        self.assertIn("Curso X \\hfill em andamento", out)
+
+    def test_sem_situacao_so_troca_parenteses_do_emissor_por_virgula(self):
+        out = c.ajustar_latex(TEX_CERT, "en")
+        self.assertIn("  \\item AWS Certified Developer – Associate, Amazon Web Services (AWS)\n", out)
+        self.assertIn("  \\item Sem emissor\n", out)
+
+    def test_item_fora_da_secao_fica_intacto(self):
+        self.assertIn("\\item fora da seção (valid) (x)", c.ajustar_latex(TEX_CERT, "en"))
+
 
 class Pasta(unittest.TestCase):
     def test_cria_pasta(self):
@@ -101,6 +202,19 @@ class Gerar(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             out, erros = self.rodar(d, json_ok=False)
             self.assertTrue(erros)
+
+    def test_caminho_relativo(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "out"; out.mkdir()
+            (out / "resume.json").write_text("{}")
+            v = fake_vendor(d); b = fake_pdflatex(d)
+            old_path, old_cwd = os.environ["PATH"], os.getcwd()
+            os.environ["PATH"] = f"{b}:{old_path}"; os.chdir(d)
+            try:
+                self.assertEqual(c.gerar_pdf("out", vendor=v), [])
+            finally:
+                os.chdir(old_cwd); os.environ["PATH"] = old_path
+            self.assertTrue((out / "curriculo.pdf").is_file())
 
     def test_sem_vendor(self):
         with tempfile.TemporaryDirectory() as d:

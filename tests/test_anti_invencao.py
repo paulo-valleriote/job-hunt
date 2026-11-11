@@ -151,6 +151,17 @@ class InglesSobrePerfilEmPortugues(unittest.TestCase):
         r = en(lambda r: r["certificates"].append({"name": "CISSP (valid)", "issuer": "Amazon", "date": ""}))
         self.assertTrue(any("CISSP" in x["fato"] for x in a.checar(r, PERFIL_PT)))
 
+    def test_technology_degree_traduz_tecnologo(self):
+        r = en(lambda r: r["education"][0].update(studyType="Technology Degree"))
+        self.assertEqual(a.checar(r, PERFIL_PT), [])
+        r = en(lambda r: r["education"][0].update(studyType="Technology Degree (in progress)"))
+        self.assertEqual(a.checar(r, PERFIL_PT), [])
+
+    def test_technology_degree_sem_tecnologo_no_perfil_reprova(self):
+        r = en(lambda r: r["education"][0].update(studyType="Technology Degree"))
+        perfil = PERFIL_PT.replace("Tecnólogo", "Curso")
+        self.assertTrue(any(x["fato"] == "Technology Degree" for x in a.checar(r, perfil)))
+
     def test_traducao_sem_termo_no_perfil_reprova(self):
         perfil = PERFIL_PT.replace("Microsserviços", "Serviços")
         self.assertTrue(any(x["fato"] == "Microservices" for x in a.checar(RESUME_EN, perfil)))
