@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT / "scripts")); sys.path.insert(0, str(ROOT / "tests"
 import busca as b  # noqa: E402
 import fontes as f  # noqa: E402
 import coleta as co  # noqa: E402
+import himalayas as hm  # noqa: E402
 from test_validar_config import BUSCA_OK, EXC_OK  # noqa: E402
 
 
@@ -787,3 +788,203 @@ class ColetadasNaCli(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --- Himalayas (ticket 06): agregador com atribuição, cache de 24 h e paginação por page ---
+HIMA_BASE = "https://himalayas.app/jobs/api/search?country=Brazil"
+HIMA_EPOCH = 1794317072  # 2026-11-10 (pubDate)
+AGORA = 1794400000  # relógio injetado
+DIA = 24 * 3600
+
+
+def _hima_job(i, restricoes=("Brazil", "Portugal"), **kw):
+    return {"title": f"Dev Backend {i}", "companyName": "Lemon", "pubDate": HIMA_EPOCH,
+            "expiryDate": HIMA_EPOCH + 30 * DIA, "locationRestrictions": list(restricoes),
+            "applicationLink": f"https://himalayas.app/companies/lemon/jobs/{i}?utm_source=api",
+            "guid": f"https://himalayas.app/companies/lemon/jobs/{i}",
+            "description": "DESCRIÇÃO COMPLETA NÃO PODE SER GRAVADA", "excerpt": "TRECHO NÃO GRAVAR",
+            **kw}
+
+
+def _hima_pagina(jobs, total=None):
+    return json.dumps({"offset": 0, "limit": 20, "totalCount": len(jobs) if total is None else total,
+                       "jobs": jobs})
+
+
+class _Rede:
+    """Fetch falso: respostas por URL; exceção vira erro; conta as chamadas."""
+    def __init__(self, respostas):
+        self.respostas, self.chamadas = respostas, []
+
+    def __call__(self, url):
+        self.chamadas.append(url)
+        r = self.respostas[url]
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+
+class _Relogio:
+    def __init__(self, t=AGORA):
+        self.t = t
+
+    def __call__(self):
+        return self.t
+
+
+class HimalayasElegibilidade(unittest.TestCase):
+    def elegib(self, restricoes):
+        return hm.normalizar(_hima_pagina([_hima_job(1, restricoes)]), _Relogio())[0]["elegibilidade"]
+
+    def test_lista_vazia_e_mundo(self):
+        self.assertEqual(self.elegib([]), "mundo")
+
+    def test_com_brazil_e_brasil_mesmo_com_outros_paises(self):
+        self.assertEqual(self.elegib(["Brazil"]), "brasil")
+        self.assertEqual(self.elegib(["Portugal", "Brazil"]), "brasil")
+
+    def test_so_outros_paises_e_restrita(self):
+        self.assertEqual(self.elegib(["Portugal", "Mexico"]), "restrita")
+
+
+class HimalayasNormalizacao(unittest.TestCase):
+    def test_mapeia_link_atribuicao_data_e_metadados(self):
+        v = hm.normalizar(_hima_pagina([_hima_job(7)]), _Relogio())[0]
+        self.assertEqual(v["titulo"], "Dev Backend 7")
+        self.assertEqual(v["empresa"], "Lemon")
+        self.assertEqual(v["link"], "https://himalayas.app/companies/lemon/jobs/7?utm_source=api")
+        self.assertEqual(v["data"], "2026-11-10")
+        self.assertEqual(v["fonte"], "himalayas")
+        self.assertEqual(v["atribuicao"], "Fonte: Himalayas")
+        self.assertEqual((v["modalidade"], v["candidatura"], v["status"]), ("remoto", "externa", "aberta"))
+        self.assertIn("Brazil", v["evidencia"])
+
+    def test_nao_grava_descricao_nem_trecho(self):
+        vagas = hm.normalizar(_hima_pagina([_hima_job(1)]), _Relogio())
+        gravado = json.dumps(vagas, ensure_ascii=False)
+        self.assertNotIn("NÃO PODE", gravado)
+        self.assertNotIn("TRECHO", gravado)
+        self.assertFalse({"description", "excerpt"} & set(vagas[0]))
+
+    def test_sem_link_de_candidatura_ou_titulo_e_ignorada(self):
+        sem_link = {k: v for k, v in _hima_job(2).items() if k != "applicationLink"}
+        sem_titulo = {k: v for k, v in _hima_job(3).items() if k != "title"}
+        vagas = hm.normalizar(_hima_pagina([sem_link, sem_titulo, _hima_job(4)]), _Relogio())
+        self.assertEqual([v["titulo"] for v in vagas], ["Dev Backend 4"])
+
+    def test_expirada_vira_encerrada(self):
+        v = hm.normalizar(_hima_pagina([_hima_job(5, expiryDate=AGORA - 1)]), _Relogio())[0]
+        self.assertEqual(v["status"], "encerrada")
+
+    def test_json_invalido_ou_sem_lista_levanta_valueerror(self):
+        for texto in ("não é json", '{"totalCount": 1}'):
+            with self.subTest(texto=texto), self.assertRaises(ValueError):
+                hm.normalizar(texto, _Relogio())
+
+    def test_atribuicao_aparece_no_render(self):
+        vagas = hm.normalizar(_hima_pagina([_hima_job(1)]), _Relogio())
+        txt = b.render(vagas, "2026-11-11", [], DESDE)
+        self.assertIn("- Atribuição: Fonte: Himalayas", txt)
+
+
+class HimalayasColeta(unittest.TestCase):
+    def coletar(self, rede, tmp, relogio=None, **kw):
+        return hm.coletar(rede, pausa=(0, 0), sleep=lambda s: None, agora=relogio or _Relogio(),
+                          cache=Path(tmp) / "himalayas.json", **kw)
+
+    def test_paginacao_segue_page_ate_o_total_e_pausa_entre_paginas(self):
+        p1 = [_hima_job(i) for i in range(20)]
+        p2 = [_hima_job(i) for i in range(20, 25)]
+        rede = _Rede({HIMA_BASE: _hima_pagina(p1, total=25),
+                      HIMA_BASE + "&page=2": _hima_pagina(p2, total=25)})
+        pausas = []
+        with tempfile.TemporaryDirectory() as d:
+            vagas, falhas = hm.coletar(rede, pausa=(1, 2), sleep=pausas.append, agora=_Relogio(),
+                                       cache=Path(d) / "himalayas.json")
+        self.assertEqual(len(vagas), 25)
+        self.assertEqual(falhas, [])
+        self.assertEqual(rede.chamadas, [HIMA_BASE, HIMA_BASE + "&page=2"])
+        self.assertEqual(len(pausas), 1)
+        self.assertTrue(1 <= pausas[0] <= 2)
+
+    def test_para_no_teto_de_paginas(self):
+        rede = _Rede({HIMA_BASE: _hima_pagina([_hima_job(1)], total=999),
+                      HIMA_BASE + "&page=2": _hima_pagina([_hima_job(2)], total=999)})
+        with tempfile.TemporaryDirectory() as d:
+            self.coletar(rede, d, paginas=2)
+        self.assertEqual(len(rede.chamadas), 2)
+
+    def test_pagina_vazia_encerra(self):
+        rede = _Rede({HIMA_BASE: _hima_pagina([_hima_job(1)], total=50),
+                      HIMA_BASE + "&page=2": _hima_pagina([], total=50)})
+        with tempfile.TemporaryDirectory() as d:
+            vagas, _ = self.coletar(rede, d)
+        self.assertEqual(len(vagas), 1)
+        self.assertEqual(len(rede.chamadas), 2)
+
+    def test_erro_de_pagina_vira_falha_mantem_o_que_veio_e_nao_grava_cache(self):
+        rede = _Rede({HIMA_BASE: _hima_pagina([_hima_job(1)], total=30),
+                      HIMA_BASE + "&page=2": urllib.error.HTTPError(HIMA_BASE, 500, "x", None, None)})
+        with tempfile.TemporaryDirectory() as d:
+            vagas, falhas = self.coletar(rede, d)
+            cache_existe = (Path(d) / "himalayas.json").exists()
+        self.assertEqual(len(vagas), 1)
+        self.assertEqual(falhas, [{"fonte": "himalayas", "motivo": "HTTP 500"}])
+        self.assertFalse(cache_existe)
+
+    def test_primeira_pagina_invalida_vira_falha_sem_vagas(self):
+        rede = _Rede({HIMA_BASE: "<html>"})
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self.coletar(rede, d), ([], [{"fonte": "himalayas",
+                                                           "motivo": "resposta inválida (JSON)"}]))
+
+    def test_dentro_de_24_h_usa_cache_e_nao_chama_a_rede(self):
+        rede = _Rede({HIMA_BASE: _hima_pagina([_hima_job(1)])})
+        relogio = _Relogio()
+        with tempfile.TemporaryDirectory() as d:
+            primeira, _ = self.coletar(rede, d, relogio)
+            relogio.t += 23 * 3600
+            segunda, falhas = self.coletar(_Rede({}), d, relogio)  # rede proibida
+        self.assertEqual(len(rede.chamadas), 1)
+        self.assertEqual(segunda, primeira)
+        self.assertEqual(falhas, [])
+
+    def test_depois_de_24_h_chama_a_rede_de_novo(self):
+        rede = _Rede({HIMA_BASE: _hima_pagina([_hima_job(1)])})
+        relogio = _Relogio()
+        with tempfile.TemporaryDirectory() as d:
+            self.coletar(rede, d, relogio)
+            relogio.t += 25 * 3600
+            self.coletar(rede, d, relogio)
+        self.assertEqual(len(rede.chamadas), 2)
+
+    def test_cache_nao_guarda_descricao(self):
+        rede = _Rede({HIMA_BASE: _hima_pagina([_hima_job(1)])})
+        with tempfile.TemporaryDirectory() as d:
+            self.coletar(rede, d)
+            conteudo = (Path(d) / "himalayas.json").read_text(encoding="utf-8")
+        self.assertNotIn("NÃO PODE", conteudo)
+        self.assertNotIn("TRECHO", conteudo)
+        self.assertIn("Fonte: Himalayas", conteudo)
+
+    def test_cache_corrompido_e_ignorado(self):
+        rede = _Rede({HIMA_BASE: _hima_pagina([_hima_job(1)])})
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "himalayas.json").write_text("{quebrado", encoding="utf-8")
+            vagas, _ = self.coletar(rede, d)
+        self.assertEqual(len(rede.chamadas), 1)
+        self.assertEqual(len(vagas), 1)
+
+
+class HimalayasDedupe(unittest.TestCase):
+    def test_ats_vence_himalayas_na_mesma_vaga(self):
+        ats = vaga(titulo="Dev Backend", empresa="Acme", link="https://job-boards.greenhouse.io/acme/jobs/9",
+                   fonte="greenhouse:acme")
+        hima = vaga(titulo="Dev Backend", empresa="Acme", link="https://himalayas.app/x?utm_source=api",
+                    fonte="himalayas", atribuicao="Fonte: Himalayas")
+        for ordem in ([ats, hima], [hima, ats]):
+            with self.subTest(primeiro=ordem[0]["fonte"]):
+                final, fora = b.processar(ordem, "", DESDE, HOJE, remoto=True)
+                self.assertEqual([v["link"] for v in final], [ats["link"]])
+                self.assertEqual(final[0]["fontes_secundarias"], ["himalayas"])
+                self.assertEqual(len(fora), 1)

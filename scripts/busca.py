@@ -5,7 +5,8 @@ A coleta em si é feita pelo Claude no navegador (Chromium do WSL com porta de d
 chrome-devtools, com login do usuário); este script só faz a parte determinística. Subcomandos (todos passam antes por validar_config):
   urls     imprime a data "desde" e as URLs de busca (só cargo, local, regime e janela de data)
   filtros  lista os filtros que o LinkedIn aplicou além do pedido, a partir da URL final
-  coletar  lê fontes_ats.json e devolve JSON {vagas, falhas} das fontes de ATS (coleta.py)
+  coletar  lê fontes_ats.json e devolve JSON {vagas, falhas} das fontes de ATS (coleta.py) e do
+           agregador Himalayas (himalayas.py, fonte fixa, cache de 24 h em private/cache/)
   candidatos  da listagem de todas as URLs, tira os de nível acima (titulos_excluidos) e escolhe
               em rodízio quem será aberto e verificado
   gravar   lê JSON das vagas verificadas, valida o contrato, aplica as regras de processar() e grava
@@ -19,6 +20,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import validar_config  # noqa: E402
 import coleta  # noqa: E402
+import himalayas  # noqa: E402
 from fontes import ARQUIVO as FONTES_ARQUIVO, ATS as ATS_FONTES, carregar_fontes  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -391,7 +393,8 @@ def main(argv=None):
         return 0
     if a.cmd == "coletar":
         vagas, falhas = coleta.coletar(carregar_fontes(a.fontes))
-        print(json.dumps({"vagas": vagas, "falhas": falhas}, ensure_ascii=False, indent=1))
+        hv, hf = himalayas.coletar()  # fonte fixa: agregador, sem entrada em fontes_ats.json
+        print(json.dumps({"vagas": vagas + hv, "falhas": falhas + hf}, ensure_ascii=False, indent=1))
         return 0
     if a.cmd == "candidatos":
         if not a.listagens or not Path(a.listagens).is_file():
