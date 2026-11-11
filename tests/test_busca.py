@@ -1,6 +1,6 @@
 """Testes do /busca (scripts/busca.py). Fixtures fictícias em diretório temporário.
 Seams: janela_desde(), build_urls(), processar() (descartes), render() e a CLI (gate, arquivo)."""
-import json, subprocess, sys, tempfile, unittest
+import json, subprocess, sys, tempfile, unittest, urllib.error
 from datetime import date
 from urllib.parse import parse_qs, urlsplit
 from pathlib import Path
@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts")); sys.path.insert(0, str(ROOT / "tests"))
 import busca as b  # noqa: E402
 import fontes as f  # noqa: E402
+import coleta as co  # noqa: E402
 from test_validar_config import BUSCA_OK, EXC_OK  # noqa: E402
 
 
@@ -455,6 +456,170 @@ class FontesAts(unittest.TestCase):
         self.assertIn("- Atribuição: Fonte: Himalayas", txt)
         self.assertIn("- Fonte: não registrada", txt)
         self.assertEqual(txt.count("- Atribuição:"), 1)
+
+
+GH_URL = "https://boards-api.greenhouse.io/v1/boards/{}/jobs"
+
+
+def _gh_job(i, titulo, local, publicada="2026-11-05T10:00:00-03:00"):
+    return {"id": i, "title": titulo, "absolute_url": f"https://job-boards.greenhouse.io/acme/jobs/{i}",
+            "location": {"name": local}, "first_published": publicada,
+            "updated_at": "2026-11-06T10:00:00-03:00", "requisition_id": "R-1", "internal_job_id": 9,
+            "company_name": "Acme", "content": "DESCRIÇÃO COMPLETA QUE NÃO PODE SER GRAVADA"}
+
+
+# Resposta gravada (fictícia) do endpoint público de lista de vagas do Greenhouse.
+GH_OK = json.dumps({"jobs": [_gh_job(1, "Engenheiro Backend", "São Paulo, São Paulo, Brasil"),
+                             _gh_job(2, "Backend Engineer", "Remote"),
+                             _gh_job(3, "Staff Engineer", "Remote - Brazil")], "meta": {"total": 3}})
+ACME = {"empresa": "Acme", "ats": "greenhouse", "token": "acme", "evidencia_url": GH_URL.format("acme"),
+        "verificado_em": "2026-11-11", "vinculo": "conteudo_das_vagas"}
+
+
+class Fake:
+    """Fetcher injetável: respostas gravadas por URL; levanta a exceção quando o valor é uma."""
+    def __init__(self, respostas):
+        self.respostas, self.chamadas = respostas, []
+
+    def __call__(self, url):
+        self.chamadas.append(url)
+        r = self.respostas[url]
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+
+def _fonte(token, **kw):
+    return {**ACME, "empresa": token.title(), "token": token, "evidencia_url": GH_URL.format(token), **kw}
+
+
+class ColetaGreenhouse(unittest.TestCase):
+    def coletar(self, fontes, fake):
+        return co.coletar(fontes, fake, pausa=(0, 0), sleep=lambda s: None)
+
+    def test_sucesso_mapeia_para_o_formato_comum(self):
+        vagas, falhas = self.coletar([ACME], Fake({GH_URL.format("acme"): GH_OK}))
+        self.assertEqual(falhas, [])
+        self.assertEqual([v["titulo"] for v in vagas], ["Engenheiro Backend", "Backend Engineer", "Staff Engineer"])
+        v = vagas[0]
+        self.assertEqual((v["empresa"], v["link"], v["local"], v["data"]),
+                         ("Acme", "https://job-boards.greenhouse.io/acme/jobs/1",
+                          "São Paulo, São Paulo, Brasil", "2026-11-05"))
+        self.assertEqual((v["fonte"], v["candidatura"], v["status"]), ("greenhouse:acme", "externa", "aberta"))
+        self.assertEqual((v["elegibilidade"], v["modalidade"]), ("brasil", ""))
+        self.assertEqual(vagas[1]["elegibilidade"], "nao_informada")
+        self.assertEqual(vagas[1]["modalidade"], "remoto")
+        self.assertEqual(b.validar_vagas(vagas), [])
+
+    def test_nao_grava_descricao_completa(self):
+        vagas, _ = self.coletar([ACME], Fake({GH_URL.format("acme"): GH_OK}))
+        for v in vagas:
+            with self.subTest(titulo=v["titulo"]):
+                self.assertNotIn("content", v)
+                self.assertFalse(v.get("requisitos"))
+                self.assertNotIn("DESCRIÇÃO", json.dumps(v, ensure_ascii=False))
+
+    def test_pede_so_o_token_publico_sem_conteudo(self):
+        fake = Fake({GH_URL.format("acme"): GH_OK})
+        self.coletar([ACME], fake)
+        self.assertEqual(fake.chamadas, [GH_URL.format("acme")])
+
+    def test_404_timeout_5xx_e_json_invalido_viram_falha_e_a_rodada_segue(self):
+        fontes = [_fonte(t) for t in "abcde"]
+        fake = Fake({
+            GH_URL.format("a"): urllib.error.HTTPError(GH_URL.format("a"), 404, "Not Found", None, None),
+            GH_URL.format("b"): TimeoutError("timed out"),
+            GH_URL.format("c"): urllib.error.HTTPError(GH_URL.format("c"), 503, "Unavailable", None, None),
+            GH_URL.format("d"): "<html>não é JSON</html>",
+            GH_URL.format("e"): GH_OK,
+        })
+        vagas, falhas = self.coletar(fontes, fake)
+        self.assertEqual(len(fake.chamadas), 5)
+        self.assertEqual(len(vagas), 3)
+        self.assertEqual({v["fonte"] for v in vagas}, {"greenhouse:e"})
+        self.assertEqual([x["fonte"] for x in falhas],
+                         ["greenhouse:a", "greenhouse:b", "greenhouse:c", "greenhouse:d"])
+        for x in falhas:
+            with self.subTest(fonte=x["fonte"]):
+                self.assertTrue(x["motivo"])
+
+    def test_lista_vazia_nao_e_falha(self):
+        self.assertEqual(self.coletar([ACME], Fake({GH_URL.format("acme"): '{"jobs": []}'})), ([], []))
+
+    def test_pausa_de_1_a_2_segundos_entre_chamadas_e_nao_antes_da_primeira(self):
+        fontes = [_fonte(t) for t in "abc"]
+        fake = Fake({GH_URL.format(t): '{"jobs": []}' for t in "abc"})
+        pausas = []
+        co.coletar(fontes, fake, sleep=pausas.append)
+        self.assertEqual(len(pausas), 2)
+        for s in pausas:
+            self.assertTrue(1 <= s <= 2, s)
+
+    def test_fonte_de_ats_sem_adaptador_nao_e_consultada(self):
+        fake = Fake({})
+        self.assertEqual(self.coletar([{**ACME, "ats": "lever", "token": "neon"}], fake), ([], []))
+        self.assertEqual(fake.chamadas, [])
+
+    def test_elegibilidade_vem_so_do_texto_de_localizacao(self):
+        casos = {"São Paulo, Brasil": "brasil", "Remote - Brazil": "brasil", "Rio de Janeiro": "brasil",
+                 "Belo Horizonte, MG": "brasil", "LATAM": "latam", "Latin America": "latam",
+                 "Remote": "nao_informada", "Remote - Worldwide": "nao_informada",
+                 "London, UK": "nao_informada", "": "nao_informada"}
+        for local, esperado in casos.items():
+            with self.subTest(local=local):
+                self.assertEqual(co.elegibilidade_do_local(local), esperado)
+
+    def test_processar_aplica_as_regras_comuns_as_vagas_da_fonte(self):
+        vagas, _ = self.coletar([ACME], Fake({GH_URL.format("acme"): GH_OK}))
+        ok, fora = b.processar(vagas, "", desde=date(2026, 11, 1), hoje=HOJE, remoto=True,
+                               titulos_excluidos=["Staff"])
+        self.assertEqual(ok, [])
+        motivos = {d["titulo"]: d["motivo"] for d in fora}
+        self.assertEqual(motivos["Engenheiro Backend"], "modalidade não verificada")
+        self.assertIn("não confirma", motivos["Backend Engineer"])
+        self.assertIn("nível acima", motivos["Staff Engineer"])
+        ok, _ = b.processar(vagas[2:], "", desde=date(2026, 11, 1), hoje=HOJE, remoto=True)
+        self.assertEqual([v["titulo"] for v in ok], ["Staff Engineer"])
+
+    def test_empresa_excluida_e_descartada_com_motivo(self):
+        vagas, _ = self.coletar([ACME], Fake({GH_URL.format("acme"): GH_OK}))
+        ok, fora = b.processar(vagas, "Acme\n", desde=date(2026, 11, 1), hoje=HOJE)
+        self.assertEqual(ok, [])
+        self.assertEqual({d["motivo"] for d in fora}, {"consta em vagas_excluidas.md"})
+
+    def test_data_ausente_vira_sem_data_publicacao(self):
+        sem = json.dumps({"jobs": [_gh_job(7, "Dev", "Brasil", publicada=None)]})
+        vagas, _ = self.coletar([ACME], Fake({GH_URL.format("acme"): sem}))
+        ok, fora = b.processar(vagas, "", desde=date(2026, 11, 1), hoje=HOJE)
+        self.assertEqual(ok, [])
+        self.assertEqual(fora[0]["motivo"], "sem data de publicação verificada")
+
+
+class ColetadasNaCli(unittest.TestCase):
+    def test_gravar_mescla_vagas_coletadas_e_relata_falhas(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            exc, res, bf = p / "exc.md", p / "res.json", p / "busca.yaml"
+            exc.write_text(EXC_OK)
+            res.write_text(json.dumps([vaga()]))
+            bf.write_text(BUSCA_OK)
+            col = p / "coletadas.json"
+            col.write_text(json.dumps({
+                "vagas": [vaga(titulo="Dev Gh", empresa="Gama Tech", fonte="greenhouse:gama",
+                               link="https://job-boards.greenhouse.io/gama/jobs/1")],
+                "falhas": [{"fonte": "greenhouse:x", "motivo": "HTTP 404"}]}))
+            out = p / "saida"
+            r = subprocess.run([sys.executable, str(ROOT / "scripts/busca.py"), "gravar",
+                                "--resultados", str(res), "--coletadas", str(col), "--saida-dir", str(out),
+                                "--data", "2026-11-08", "--desde", "2026-11-01",
+                                "--busca", str(bf), "--excluidas", str(exc)],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            txt = (out / "2026-11-08-busca.md").read_text(encoding="utf-8")
+            self.assertIn("Dev Gh", txt)
+            self.assertIn("- Fonte: greenhouse:gama", txt)
+            self.assertIn("# Falhas de fontes", txt)
+            self.assertIn("greenhouse:x: HTTP 404", txt)
 
 
 if __name__ == "__main__":

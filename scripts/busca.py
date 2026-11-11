@@ -5,6 +5,7 @@ A coleta em si é feita pelo Claude no navegador (Chromium do WSL com porta de d
 chrome-devtools, com login do usuário); este script só faz a parte determinística. Subcomandos (todos passam antes por validar_config):
   urls     imprime a data "desde" e as URLs de busca (só cargo, local, regime e janela de data)
   filtros  lista os filtros que o LinkedIn aplicou além do pedido, a partir da URL final
+  coletar  lê fontes_ats.json e devolve JSON {vagas, falhas} das fontes de ATS (coleta.py)
   candidatos  da listagem de todas as URLs, tira os de nível acima (titulos_excluidos) e escolhe
               em rodízio quem será aberto e verificado
   gravar   lê JSON das vagas verificadas, valida o contrato, aplica as regras de processar() e grava
@@ -17,6 +18,8 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import validar_config  # noqa: E402
+import coleta  # noqa: E402
+from fontes import ARQUIVO as FONTES_ARQUIVO, carregar_fontes  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 JANELA_PADRAO, JANELA_MAX = 7, 30
@@ -259,7 +262,7 @@ def _grupo(v):
     return "externa" if _norm(v.get("candidatura")) == "externa" else "simplificada"
 
 
-def render(vagas, data, descartadas=(), desde=None):
+def render(vagas, data, descartadas=(), desde=None, falhas=()):
     cab = f"{len(vagas)} vaga(s), sem classificação"
     if desde:
         cab += f", publicadas desde {desde}"
@@ -286,12 +289,18 @@ def render(vagas, data, descartadas=(), desde=None):
         L += ["# Descartadas", ""]
         L += [f"- {d['titulo']} | {d['empresa']} | {d['motivo']} | {d['link']}" for d in descartadas]
         L.append("")
+    if falhas:
+        L += ["# Falhas de fontes", ""]
+        L += [f"- {x['fonte']}: {x['motivo']}" for x in falhas]
+        L.append("")
     return "\n".join(L)
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["urls", "candidatos", "filtros", "gravar"])
+    ap.add_argument("cmd", choices=["urls", "candidatos", "filtros", "coletar", "gravar"])
+    ap.add_argument("--fontes", default=str(FONTES_ARQUIVO), help="lista de tokens de ATS (comando 'coletar')")
+    ap.add_argument("--coletadas", help="JSON {vagas, falhas} do comando 'coletar' (comando 'gravar')")
     ap.add_argument("--busca", default=str(ROOT / "busca.yaml"))
     ap.add_argument("--excluidas", default=str(ROOT / "private/perfil/vagas_excluidas.md"))
     ap.add_argument("--resultados")
@@ -325,6 +334,10 @@ def main(argv=None):
         extras = filtros_extras(a.url)
         print("\n".join(f"{k}={v}" for k, v in extras.items()) or "nenhum filtro extra")
         return 0
+    if a.cmd == "coletar":
+        vagas, falhas = coleta.coletar(carregar_fontes(a.fontes))
+        print(json.dumps({"vagas": vagas, "falhas": falhas}, ensure_ascii=False, indent=1))
+        return 0
     if a.cmd == "candidatos":
         if not a.listagens or not Path(a.listagens).is_file():
             print("--listagens é obrigatório em 'candidatos' (arquivo JSON existente)", file=sys.stderr)
@@ -344,6 +357,11 @@ def main(argv=None):
         print("--resultados é obrigatório em 'gravar'", file=sys.stderr)
         return 2
     vagas = json.loads(Path(a.resultados).read_text(encoding="utf-8"))
+    falhas = []
+    if a.coletadas:
+        col = json.loads(Path(a.coletadas).read_text(encoding="utf-8"))
+        vagas = vagas + col.get("vagas", [])
+        falhas = col.get("falhas", [])
     probs = validar_vagas(vagas)
     if probs:
         print("\n".join(probs), file=sys.stderr)
@@ -355,7 +373,7 @@ def main(argv=None):
     out = Path(a.saida_dir)
     out.mkdir(parents=True, exist_ok=True)
     dest = out / f"{a.data}-busca.md"
-    dest.write_text(render(final, a.data, fora, desde), encoding="utf-8")
+    dest.write_text(render(final, a.data, fora, desde, falhas), encoding="utf-8")
     print(f"{len(final)} vaga(s) gravada(s) em {dest}; {len(fora)} descartada(s)")
     return 0
 
