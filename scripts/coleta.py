@@ -85,7 +85,66 @@ class Greenhouse:
         return out
 
 
-ADAPTADORES = {a.ats: a for a in (Greenhouse,)}
+MODALIDADE_ASHBY = {"remote": "remoto", "hybrid": "hibrido", "onsite": "presencial"}
+
+
+def _pais_do_endereco(endereco):
+    if not isinstance(endereco, dict) or not isinstance(endereco.get("postalAddress"), dict):
+        return None
+    return endereco["postalAddress"].get("addressCountry") or None
+
+
+class Ashby:
+    """API pública de vagas publicadas: api.ashbyhq.com/posting-api/job-board/{board} (sem descrição).
+
+    Elegibilidade: país dos campos estruturados (address e secondaryLocations) é sinal mais forte
+    que o texto do local; só com campo estruturado ausente vale o texto. Não há país comprovável
+    = nao_informada (descartada por elegibilidade). Data: publishedAt (updatedAt não é usada).
+    """
+    ats = "ashby"
+
+    @staticmethod
+    def url(fonte):
+        return f"https://api.ashbyhq.com/posting-api/job-board/{fonte['token']}"
+
+    @staticmethod
+    def vagas(texto, fonte):
+        jobs = json.loads(texto).get("jobs")
+        if not isinstance(jobs, list):
+            raise ValueError("resposta sem lista 'jobs'")
+        out = []
+        for j in jobs:
+            if not (j.get("title") and j.get("jobUrl")):
+                continue
+            local = j.get("location") or ""
+            paises = []  # (campo literal, país) dos campos estruturados, primário antes dos secundários
+            if (p := _pais_do_endereco(j.get("address"))):
+                paises.append(("addressCountry", p))
+            for s in j.get("secondaryLocations") or []:
+                if isinstance(s, dict) and (p := _pais_do_endereco(s.get("address"))):
+                    paises.append(("secondaryLocations.addressCountry", p))
+            brasil = [(c, p) for c, p in paises if _sem_acento(p).strip() in ("brazil", "brasil")]
+            if brasil:
+                elegibilidade, evidencia = "brasil", f"{brasil[0][0]}: {brasil[0][1]}"
+            elif paises:
+                elegibilidade, evidencia = "nao_informada", f"{paises[0][0]}: {paises[0][1]}"
+            else:
+                elegibilidade = elegibilidade_do_local(local)
+                evidencia = f"location: {local or 'não informada'}"
+            modalidade = MODALIDADE_ASHBY.get(str(j.get("workplaceType") or "").lower())
+            if modalidade is None:
+                modalidade = "remoto" if j.get("isRemote") is True else modalidade_do_local(local)
+            out.append({
+                "titulo": j["title"], "empresa": fonte["empresa"], "link": j["jobUrl"],
+                "local": local, "data": (j.get("publishedAt") or "")[:10],
+                "requisitos": "", "evidencia": evidencia,
+                "fonte": f"{Ashby.ats}:{fonte['token']}", "candidatura": "externa", "status": "aberta",
+                "modalidade": modalidade, "elegibilidade": elegibilidade,
+            })
+        return out
+
+
+ADAPTADORES = {a.ats: a for a in (Greenhouse, Ashby)}
 
 
 def _motivo(e):

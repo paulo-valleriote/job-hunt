@@ -595,6 +595,116 @@ class ColetaGreenhouse(unittest.TestCase):
         self.assertEqual(fora[0]["motivo"], "sem data de publicação verificada")
 
 
+ASHBY_URL = "https://api.ashbyhq.com/posting-api/job-board/{}"
+
+
+def _ab_job(i, titulo, local, *, pais=None, sec=None, remoto=None, modo=None, publicada="2026-10-28T17:26:58.786+00:00"):
+    return {"id": f"job-{i}", "title": titulo, "location": local, "secondaryLocations": sec or [],
+            "publishedAt": publicada, "isListed": True, "isRemote": remoto, "workplaceType": modo,
+            "address": {"postalAddress": {"addressCountry": pais, "addressLocality": local}} if pais else None,
+            "jobUrl": f"https://jobs.ashbyhq.com/acme/job-{i}",
+            "applyUrl": f"https://jobs.ashbyhq.com/acme/job-{i}/application",
+            "descriptionHtml": "<p>DESCRIÇÃO COMPLETA QUE NÃO PODE SER GRAVADA</p>",
+            "descriptionPlain": "DESCRIÇÃO COMPLETA QUE NÃO PODE SER GRAVADA"}
+
+
+def _ab_sec(local, pais):
+    return {"location": local, "address": {"postalAddress": {"addressCountry": pais, "addressLocality": local}}}
+
+
+# Resposta gravada (fictícia, no formato real) do endpoint público de vagas publicadas do Ashby.
+ASHBY_OK = json.dumps({"jobs": [
+    _ab_job(1, "Engenheiro Backend", "São Paulo", pais="Brazil", remoto=False, modo="Hybrid"),
+    _ab_job(2, "Analista Remoto", "Remote", pais="Brazil", remoto=True, modo="Remote"),
+    _ab_job(3, "Staff Engineer", "Buenos Aires", pais="Argentina", remoto=True, modo="Hybrid"),
+    _ab_job(4, "Platform Engineer", "Remote", remoto=True, modo="Remote"),
+    _ab_job(5, "Designer", "Palo Alto", pais="United States", remoto=False, modo="OnSite",
+            sec=[_ab_sec("São Paulo", "Brazil")]),
+    _ab_job(6, "Data Engineer", "Remote - Brasil", remoto=True, modo=None),
+]}, ensure_ascii=False)
+ACME_ASHBY = {"empresa": "Acme", "ats": "ashby", "token": "acme", "evidencia_url": ASHBY_URL.format("acme"),
+              "verificado_em": "2026-11-11", "vinculo": "conteudo_das_vagas"}
+
+
+class ColetaAshby(unittest.TestCase):
+    def coletar(self, fontes, fake):
+        return co.coletar(fontes, fake, pausa=(0, 0), sleep=lambda s: None)
+
+    def vagas_do_acme(self):
+        vagas, _ = self.coletar([ACME_ASHBY], Fake({ASHBY_URL.format("acme"): ASHBY_OK}))
+        return {v["titulo"]: v for v in vagas}
+
+    def test_sucesso_mapeia_para_o_formato_comum(self):
+        vagas, falhas = self.coletar([ACME_ASHBY], Fake({ASHBY_URL.format("acme"): ASHBY_OK}))
+        self.assertEqual(falhas, [])
+        self.assertEqual(len(vagas), 6)
+        v = self.vagas_do_acme()["Engenheiro Backend"]
+        self.assertEqual((v["empresa"], v["link"], v["local"], v["data"]),
+                         ("Acme", "https://jobs.ashbyhq.com/acme/job-1", "São Paulo", "2026-10-28"))
+        self.assertEqual((v["fonte"], v["candidatura"], v["status"]), ("ashby:acme", "externa", "aberta"))
+        self.assertEqual(b.validar_vagas(vagas), [])
+
+    def test_vaga_com_isremote_e_endereco_brasileiro_e_aceita(self):
+        v = self.vagas_do_acme()["Analista Remoto"]
+        self.assertEqual((v["elegibilidade"], v["modalidade"]), ("brasil", "remoto"))
+        self.assertEqual(v["evidencia"], "addressCountry: Brazil")
+
+    def test_endereco_estrangeiro_e_sinal_mais_forte_que_o_texto(self):
+        v = self.vagas_do_acme()["Staff Engineer"]
+        self.assertEqual(v["elegibilidade"], "nao_informada")
+        self.assertEqual(v["evidencia"], "addressCountry: Argentina")
+
+    def test_remota_sem_pais_comprovavel_fica_nao_informada(self):
+        v = self.vagas_do_acme()["Platform Engineer"]
+        self.assertEqual((v["elegibilidade"], v["modalidade"]), ("nao_informada", "remoto"))
+
+    def test_brasil_em_local_secundario_conta_como_elegivel(self):
+        v = self.vagas_do_acme()["Designer"]
+        self.assertEqual((v["elegibilidade"], v["modalidade"]), ("brasil", "presencial"))
+        self.assertEqual(v["evidencia"], "secondaryLocations.addressCountry: Brazil")
+
+    def test_sem_campo_estruturado_usa_o_texto_do_local_como_fallback(self):
+        v = self.vagas_do_acme()["Data Engineer"]
+        self.assertEqual((v["elegibilidade"], v["modalidade"]), ("brasil", "remoto"))
+        self.assertEqual(v["evidencia"], "location: Remote - Brasil")
+
+    def test_data_e_publishedat_e_nao_ha_campo_de_atualizacao_lido(self):
+        self.assertTrue(all(v["data"] == "2026-10-28" for v in self.vagas_do_acme().values()))
+
+    def test_nao_grava_descricao_completa(self):
+        vagas, _ = self.coletar([ACME_ASHBY], Fake({ASHBY_URL.format("acme"): ASHBY_OK}))
+        for v in vagas:
+            with self.subTest(titulo=v["titulo"]):
+                self.assertNotIn("descriptionHtml", v)
+                self.assertNotIn("descriptionPlain", v)
+                self.assertNotIn("DESCRIÇÃO", json.dumps(v, ensure_ascii=False))
+
+    def test_pede_so_o_token_publico(self):
+        fake = Fake({ASHBY_URL.format("acme"): ASHBY_OK})
+        self.coletar([ACME_ASHBY], fake)
+        self.assertEqual(fake.chamadas, [ASHBY_URL.format("acme")])
+
+    def test_404_e_json_invalido_viram_falha_e_a_rodada_segue(self):
+        fontes = [{**ACME_ASHBY, "token": t} for t in ("a", "b", "c")]
+        fake = Fake({
+            ASHBY_URL.format("a"): urllib.error.HTTPError(ASHBY_URL.format("a"), 404, "Not Found", None, None),
+            ASHBY_URL.format("b"): "<html>não é JSON</html>",
+            ASHBY_URL.format("c"): ASHBY_OK,
+        })
+        vagas, falhas = self.coletar(fontes, fake)
+        self.assertEqual(len(vagas), 6)
+        self.assertEqual({v["fonte"] for v in vagas}, {"ashby:c"})
+        self.assertEqual([(x["fonte"], x["motivo"]) for x in falhas],
+                         [("ashby:a", "HTTP 404"), ("ashby:b", "resposta inválida (JSON)")])
+
+    def test_lista_vazia_nao_e_falha(self):
+        self.assertEqual(self.coletar([ACME_ASHBY], Fake({ASHBY_URL.format("acme"): '{"jobs": []}'})), ([], []))
+
+    def test_resposta_sem_lista_jobs_e_falha(self):
+        vagas, falhas = self.coletar([ACME_ASHBY], Fake({ASHBY_URL.format("acme"): '{"erro": 1}'}))
+        self.assertEqual((vagas, [x["motivo"] for x in falhas]), ([], ["resposta inválida (JSON)"]))
+
+
 class ColetadasNaCli(unittest.TestCase):
     def test_gravar_mescla_vagas_coletadas_e_relata_falhas(self):
         with tempfile.TemporaryDirectory() as d:
