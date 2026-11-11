@@ -1,7 +1,7 @@
 """Coleta de vagas pelas fontes de ATS (fontes_ats.json) no formato comum de processar().
 
-Um adaptador por ATS (hoje: Greenhouse e Lever; Ashby e Himalayas entram depois, sem mexer nas
-regras de descarte, que ficam em busca.processar()). O fetcher é injetável (seam único): em
+Um adaptador por ATS (Greenhouse, Lever e Ashby; o agregador Himalayas fica em himalayas.py, sem
+entrada em fontes_ats.json; as regras de descarte ficam em busca.processar()). O fetcher é injetável (seam único): em
 produção é um GET público sem chave; nos testes, respostas gravadas. Só o token público vai na
 URL; a descrição completa da vaga nunca é lida nem gravada. Falha de uma fonte (timeout, 404,
 5xx, JSON inválido) vira entrada em "falhas" e a rodada segue. Pausa entre chamadas: 1 a 2 s.
@@ -17,6 +17,11 @@ MARCAS_BRASIL = ("brasil", "brazil", "sao paulo", "rio de janeiro", "belo horizo
                  "porto alegre", "florianopolis", "recife", "brasilia", "campinas", "salvador",
                  "fortaleza", "vitoria", "goiania", "joinville", "londrina")
 MARCAS_LATAM = ("latam", "latin america", "america latina", "latinoamerica")
+# Outro país citado explícito: junto de marca brasileira, o texto é ambíguo (ex.: "Remote - US (SP office)").
+MARCAS_OUTRO_PAIS = ("usa", "us", "united states", "eua", "estados unidos", "uk", "united kingdom",
+                     "reino unido", "portugal", "canada", "mexico", "argentina", "colombia", "chile",
+                     "germany", "alemanha", "france", "franca", "spain", "espanha", "italy", "italia",
+                     "netherlands", "holanda", "ireland", "irlanda", "australia", "india")
 
 
 def http_get(url):
@@ -39,6 +44,8 @@ def elegibilidade_do_local(local):
     """brasil | latam | nao_informada (remoto sem país, região desconhecida ou vazio)."""
     t = _sem_acento(local)
     if _tem(t, MARCAS_BRASIL):
+        if _tem(t, MARCAS_OUTRO_PAIS):  # Brasil e outro país no mesmo texto: não dá para afirmar
+            return "nao_informada"
         return "brasil"
     if _tem(t, MARCAS_LATAM):
         return "latam"
@@ -180,7 +187,7 @@ class Ashby:
 ADAPTADORES = {a.ats: a for a in (Greenhouse, Lever, Ashby)}
 
 
-def _motivo(e):
+def motivo_da_falha(e):
     if isinstance(e, urllib.error.HTTPError):
         return f"HTTP {e.code}"
     if isinstance(e, urllib.error.URLError):
@@ -205,5 +212,5 @@ def coletar(fontes, fetch=http_get, pausa=PAUSA, sleep=time.sleep):
         try:
             vagas += adaptador.vagas(fetch(adaptador.url(fonte)), fonte)
         except Exception as e:  # uma fonte que falha não derruba a rodada
-            falhas.append({"fonte": f"{fonte.get('ats')}:{fonte.get('token')}", "motivo": _motivo(e)})
+            falhas.append({"fonte": f"{fonte.get('ats')}:{fonte.get('token')}", "motivo": motivo_da_falha(e)})
     return vagas, falhas

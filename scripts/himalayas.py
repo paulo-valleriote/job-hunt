@@ -72,8 +72,8 @@ def pagina(texto, agora):
     t = agora()
     out = []
     for j in jobs:
-        if not (j.get("title") and j.get("applicationLink")):
-            continue
+        if not (j.get("title") and j.get("applicationLink") and j.get("companyName")):
+            continue  # sem empresa, validar_vagas derrubaria o gravar inteiro
         restricoes = j.get("locationRestrictions") or []
         el = elegibilidade(restricoes)
         exp = j.get("expiryDate")
@@ -127,7 +127,7 @@ def coletar(fetch=coleta.http_get, pausa=PAUSA, sleep=time.sleep, agora=time.tim
         try:
             pv, total, bruto = pagina(fetch(url(n)), agora)
         except Exception as e:  # uma fonte que falha não derruba a rodada
-            return vagas, [{"fonte": FONTE, "motivo": coleta._motivo(e)}]
+            return vagas, [{"fonte": FONTE, "motivo": coleta.motivo_da_falha(e)}]
         vagas += pv
         visto += bruto
         if bruto == 0 or visto >= total:

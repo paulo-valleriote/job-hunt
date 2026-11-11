@@ -1164,3 +1164,70 @@ class HimalayasDedupe(unittest.TestCase):
                 self.assertEqual([v["link"] for v in final], [ats["link"]])
                 self.assertEqual(final[0]["fontes_secundarias"], ["himalayas"])
                 self.assertEqual(len(fora), 1)
+
+
+class HimalayasSemEmpresa(unittest.TestCase):
+    def test_vaga_sem_companyname_e_pulada(self):
+        sem = _hima_job(1)
+        del sem["companyName"]
+        vagas = hm.normalizar(_hima_pagina([sem, _hima_job(2)]), _Relogio())
+        self.assertEqual([v["titulo"] for v in vagas], ["Dev Backend 2"])
+
+    def test_gravar_com_vaga_do_himalayas_sem_companyname_nao_falha(self):
+        sem = _hima_job(1)
+        del sem["companyName"]
+        vagas = hm.normalizar(_hima_pagina([sem, _hima_job(2)]), _Relogio())
+        self.assertEqual(b.validar_vagas(vagas), [])
+
+
+class ElegibilidadeDoisPaises(unittest.TestCase):
+    def test_brasil_mais_outro_pais_explicito_vira_nao_informada(self):
+        for local in ("Remote - US (SP office)", "Remote, US or São Paulo", "Remote - Brazil or Portugal",
+                      "São Paulo or United Kingdom"):
+            with self.subTest(local=local):
+                self.assertEqual(co.elegibilidade_do_local(local), "nao_informada")
+
+    def test_casos_existentes_continuam(self):
+        casos = {"São Paulo, Brazil": "brasil", "Brazil": "brasil", "São Paulo, Brasil": "brasil",
+                 "Remote - Brazil": "brasil", "LATAM": "latam"}
+        for local, esperado in casos.items():
+            with self.subTest(local=local):
+                self.assertEqual(co.elegibilidade_do_local(local), esperado)
+
+
+class PausaAntesDoHimalayas(unittest.TestCase):
+    def test_pausa_entre_ultimo_ats_e_primeira_chamada_do_himalayas(self):
+        eventos = []
+
+        def fetch(url):
+            eventos.append(("get", url))
+            if "greenhouse" in url:
+                return GH_OK
+            return _hima_pagina([_hima_job(1)])
+
+        with tempfile.TemporaryDirectory() as d:
+            vagas, falhas = b.coletar_todas([ACME], fetch=fetch, sleep=lambda s: eventos.append(("sleep", s)),
+                                            cache=Path(d) / "himalayas.json")
+        self.assertEqual(falhas, [])
+        self.assertEqual([e[0] for e in eventos], ["get", "sleep", "get"])
+        self.assertIn("greenhouse", eventos[0][1])
+        self.assertIn("himalayas", eventos[2][1])
+        self.assertTrue(1 <= eventos[1][1] <= 2)
+
+    def test_sem_ats_nao_ha_pausa_antes_do_himalayas(self):
+        eventos = []
+
+        def fetch(url):
+            eventos.append(("get", url))
+            return _hima_pagina([_hima_job(1)])
+
+        with tempfile.TemporaryDirectory() as d:
+            b.coletar_todas([], fetch=fetch, sleep=lambda s: eventos.append(("sleep", s)),
+                            cache=Path(d) / "himalayas.json")
+        self.assertEqual([e[0] for e in eventos], ["get"])
+
+
+class MotivoPublico(unittest.TestCase):
+    def test_motivo_da_falha_e_publico(self):
+        self.assertEqual(co.motivo_da_falha(urllib.error.HTTPError("u", 500, "x", None, None)), "HTTP 500")
+        self.assertFalse(hasattr(co, "_motivo"))

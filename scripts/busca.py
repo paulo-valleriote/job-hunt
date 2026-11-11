@@ -12,7 +12,7 @@ chrome-devtools, com login do usuário); este script só faz a parte determinís
   gravar   lê JSON das vagas verificadas, valida o contrato, aplica as regras de processar() e grava
            AAAA-MM-DD-busca.md (as regras de descarte estão documentadas só em processar())
 """
-import argparse, json, re, sys, unicodedata
+import argparse, json, random, re, sys, time, unicodedata
 from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -157,7 +157,9 @@ def _fonte_de(v):
 
 
 def _prioridade(v):
-    """Na duplicata, fica o ATS da empresa (0); agregadores (LinkedIn, Himalayas) ficam em 1."""
+    """Na duplicata, fica o ATS da empresa (0); agregadores (LinkedIn, Himalayas) ficam em 1.
+    LinkedIn e Himalayas têm a mesma prioridade: na duplicata entre eles vence quem vier primeiro
+    na ordem de processar() (em gravar, as vagas do LinkedIn vêm antes das coletadas)."""
     return 0 if _fonte_de(v) in ATS_FONTES else 1
 
 
@@ -313,6 +315,16 @@ def validar_vagas(vagas):
     return probs
 
 
+def coletar_todas(fontes, fetch=coleta.http_get, sleep=time.sleep, cache=himalayas.CACHE_ARQUIVO):
+    """Fontes de ATS e, depois, o Himalayas. Se algum ATS foi consultado, espera 1 a 2 s antes da
+    primeira chamada do Himalayas (contadores de pausa de coleta.py e himalayas.py são independentes)."""
+    vagas, falhas = coleta.coletar(fontes, fetch=fetch)
+    if any(f.get("ats") in coleta.ADAPTADORES for f in fontes):
+        sleep(random.uniform(*coleta.PAUSA))
+    hv, hf = himalayas.coletar(fetch, sleep=sleep, cache=cache)  # fonte fixa, sem fontes_ats.json
+    return vagas + hv, falhas + hf
+
+
 def _grupo(v):
     return "externa" if _norm(v.get("candidatura")) == "externa" else "simplificada"
 
@@ -425,9 +437,8 @@ def main(argv=None):
         print("\n".join(f"{k}={v}" for k, v in extras.items()) or "nenhum filtro extra")
         return 0
     if a.cmd == "coletar":
-        vagas, falhas = coleta.coletar(carregar_fontes(a.fontes))
-        hv, hf = himalayas.coletar()  # fonte fixa: agregador, sem entrada em fontes_ats.json
-        print(json.dumps({"vagas": vagas + hv, "falhas": falhas + hf}, ensure_ascii=False, indent=1))
+        vagas, falhas = coletar_todas(carregar_fontes(a.fontes))
+        print(json.dumps({"vagas": vagas, "falhas": falhas}, ensure_ascii=False, indent=1))
         return 0
     if a.cmd == "candidatos":
         if not a.listagens or not Path(a.listagens).is_file():
