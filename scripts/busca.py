@@ -41,7 +41,8 @@ VALORES = {"modalidade": ("", "remoto", "hibrido", "híbrido", "presencial"),
            "elegibilidade": ("", *ELEGIVEL, "restrita", "nao_informada"),
            "candidatura": ("simplificada", "externa"),
            "status": ("", "aberta", "encerrada", "removida")}
-CHAVES = {"titulo", "empresa", "link", "local", "data", "requisitos", "trecho", "evidencia", *VALORES}
+CHAVES = {"titulo", "empresa", "link", "local", "data", "requisitos", "trecho", "evidencia",
+          "fonte", "atribuicao", *VALORES}
 OBRIGATORIAS = ("titulo", "empresa", "link")
 REGIMES = {"presencial": "1", "remoto": "2", "híbrido": "3", "hibrido": "3"}
 GRUPOS = (("simplificada", "Candidatura simplificada (dentro do LinkedIn)"),
@@ -276,7 +277,10 @@ def render(vagas, data, descartadas=(), desde=None):
                   f"- Modalidade: {v.get('modalidade') or 'não verificada'} "
                   f"(aceita candidatos de: {v.get('elegibilidade') or 'não confirmado'})",
                   f"- Evidência: {v.get('evidencia') or 'não registrada'}",
-                  f"- Candidatura: {chave}", f"- Link: {v.get('link', '')}",
+                  f"- Fonte: {v.get('fonte') or 'não registrada'}"]
+            if v.get("atribuicao"):
+                L.append(f"- Atribuição: {v['atribuicao']}")
+            L += [f"- Candidatura: {chave}", f"- Link: {v.get('link', '')}",
                   f"- Trecho: {v.get('requisitos') or v.get('trecho', '')}", ""]
     if descartadas:
         L += ["# Descartadas", ""]

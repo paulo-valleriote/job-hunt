@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts")); sys.path.insert(0, str(ROOT / "tests"))
 import busca as b  # noqa: E402
+import fontes as f  # noqa: E402
 from test_validar_config import BUSCA_OK, EXC_OK  # noqa: E402
 
 
@@ -401,6 +402,59 @@ class Cli(unittest.TestCase):
         r = self.run_cli("filtros", "--url", "https://www.linkedin.com/jobs/search-results/?keywords=Go&f_TPR=r1")
         self.assertIn("nenhum filtro extra", r.stdout)
         self.assertEqual(self.run_cli("filtros").returncode, 2)
+
+
+class FontesAts(unittest.TestCase):
+    """Lista versionada de tokens de ATS (scripts/fontes.py): só entra token com evidência."""
+    ENTRADA = {"empresa": "Acme", "ats": "greenhouse", "token": "acme",
+               "evidencia_url": "https://boards-api.greenhouse.io/v1/boards/acme/jobs",
+               "verificado_em": "2026-11-11", "vinculo": "conteudo_das_vagas"}
+
+    def test_lista_inicial_traz_os_dez_tokens_com_evidencia_e_vinculo(self):
+        entradas = f.carregar_fontes(ROOT / "fontes_ats.json")
+        tokens = {(e["ats"], e["token"]) for e in entradas}
+        self.assertEqual(tokens, {("greenhouse", t) for t in ("ebanx", "quintoandar", "stone", "gympass",
+                                                              "vtex", "inter", "c6bank", "rdstation")}
+                                 | {("ashby", "nubank"), ("lever", "neon")})
+        oficiais = {e["token"] for e in entradas if e["vinculo"] == "pagina_oficial"}
+        self.assertEqual(oficiais, {"ebanx", "neon"})
+        for e in entradas:
+            with self.subTest(token=e["token"]):
+                self.assertEqual(e["verificado_em"], "2026-11-11")
+                self.assertTrue(e["evidencia_url"].startswith("https://"))
+
+    def test_entrada_sem_evidencia_e_recusada(self):
+        sem = {k: v for k, v in self.ENTRADA.items() if k != "evidencia_url"}
+        self.assertTrue(any("evidencia_url" in p for p in f.validar_fontes([sem])))
+        vazia = {**self.ENTRADA, "evidencia_url": "  "}
+        self.assertTrue(f.validar_fontes([vazia]))
+        with tempfile.TemporaryDirectory() as d:
+            arq = Path(d) / "fontes.json"
+            arq.write_text(json.dumps([sem]))
+            with self.assertRaises(ValueError):
+                f.carregar_fontes(arq)
+
+    def test_recusa_ats_vinculo_e_data_invalidos_e_chave_desconhecida(self):
+        for campo, valor in (("ats", "gupy"), ("vinculo", "talvez"), ("verificado_em", "11/11/2026")):
+            with self.subTest(campo=campo):
+                self.assertTrue(f.validar_fontes([{**self.ENTRADA, campo: valor}]))
+        self.assertTrue(f.validar_fontes([{**self.ENTRADA, "tokn": "x"}]))
+        self.assertEqual(f.validar_fontes([self.ENTRADA]), [])
+
+    def test_gravar_aceita_fonte_e_atribuicao_e_segue_recusando_chave_desconhecida(self):
+        ok = vaga(fonte="Himalayas", atribuicao="Fonte: Himalayas")
+        self.assertEqual(b.validar_vagas([ok]), [])
+        self.assertTrue(b.validar_vagas([vaga(fonte_typo="x")]))
+
+    def test_render_mostra_fonte_e_atribuicao_quando_houver(self):
+        txt = b.render([vaga(fonte="Greenhouse: stone", atribuicao="", link="https://x/1"),
+                        vaga(titulo="Hima", fonte="Himalayas", atribuicao="Fonte: Himalayas",
+                             link="https://x/2"),
+                        vaga(titulo="Sem fonte", link="https://x/3")], "2026-11-08", [], DESDE)
+        self.assertIn("- Fonte: Greenhouse: stone", txt)
+        self.assertIn("- Atribuição: Fonte: Himalayas", txt)
+        self.assertIn("- Fonte: não registrada", txt)
+        self.assertEqual(txt.count("- Atribuição:"), 1)
 
 
 if __name__ == "__main__":
