@@ -80,7 +80,7 @@ class Processar(unittest.TestCase):
         c = vaga(titulo="Outro", empresa="Gama", link="https://www.linkedin.com/jobs/view/4487014884/")
         ok, fora = b.processar([a, c], "")
         self.assertEqual(len(ok), 1)
-        self.assertEqual(fora[0]["motivo"], "duplicada")
+        self.assertIn("duplicada", fora[0]["motivo"])
 
     def test_remove_duplicata_por_titulo_e_empresa(self):
         a = vaga(link="https://x/1")
@@ -180,6 +180,78 @@ class Processar(unittest.TestCase):
 
     def test_aceita_dentro_da_janela(self):
         self.assertEqual(len(b.processar([vaga()], "", desde=DESDE, hoje=HOJE)[0]), 1)
+
+
+class DedupeEntreFontes(unittest.TestCase):
+    """Ticket 05: mesma vaga em duas fontes aparece uma vez, com o link do ATS; rodízio sob o teto."""
+    LI = "https://www.linkedin.com/jobs/view/4487014884/"
+    ATS = "https://boards.greenhouse.io/beta/jobs/555"
+
+    def test_ats_vence_linkedin_quando_o_linkedin_vem_primeiro(self):
+        li = vaga(link=self.LI, fonte="linkedin")
+        ats = vaga(link=self.ATS, fonte="greenhouse:beta", candidatura="externa")
+        ok, fora = b.processar([li, ats], "")
+        self.assertEqual([v["link"] for v in ok], [self.ATS])
+        self.assertEqual(ok[0]["fontes_secundarias"], ["linkedin"])
+        self.assertIn("duplicada", fora[0]["motivo"])
+        self.assertEqual(fora[0]["link"], self.LI)
+
+    def test_ats_vence_linkedin_quando_o_ats_vem_primeiro(self):
+        ats = vaga(link=self.ATS, fonte="greenhouse:beta", candidatura="externa")
+        li = vaga(link=self.LI, fonte="linkedin")
+        ok, fora = b.processar([ats, li], "")
+        self.assertEqual([v["link"] for v in ok], [self.ATS])
+        self.assertEqual(ok[0]["fontes_secundarias"], ["linkedin"])
+        self.assertEqual(len(fora), 1)
+
+    def test_linkedin_sem_campo_fonte_conta_como_linkedin(self):
+        li = vaga(link=self.LI)  # vaga antiga, sem "fonte"
+        ats = vaga(link=self.ATS, fonte="lever:neon", candidatura="externa")
+        ok, _ = b.processar([li, ats], "")
+        self.assertEqual([v["link"] for v in ok], [self.ATS])
+        self.assertEqual(ok[0]["fontes_secundarias"], ["linkedin"])
+
+    def test_duplicata_entre_agregadores_mantem_a_primeira_e_registra_a_outra(self):
+        li = vaga(link=self.LI)
+        him = vaga(link="https://himalayas.app/jobs/beta-dev", fonte="himalayas")
+        ok, fora = b.processar([li, him], "")
+        self.assertEqual([v["link"] for v in ok], [self.LI])
+        self.assertEqual(ok[0]["fontes_secundarias"], ["himalayas"])
+        self.assertEqual(len(fora), 1)
+
+    def test_mesmo_link_com_query_diferente_e_duplicata(self):
+        a = vaga(titulo="Dev A", link="https://boards.greenhouse.io/beta/jobs/555?gh_src=x", fonte="greenhouse:beta")
+        c = vaga(titulo="Dev B", link="https://boards.greenhouse.io/beta/jobs/555?utm=1", fonte="greenhouse:beta")
+        self.assertEqual(len(b.processar([a, c], "")[0]), 1)
+
+    def test_rodizio_divide_o_teto_entre_fontes(self):
+        li = [vaga(titulo=f"LI {i}", link=f"https://www.linkedin.com/jobs/view/{100000 + i}/", fonte="linkedin")
+              for i in range(5)]
+        gh = [vaga(titulo=f"GH {i}", empresa=f"Emp {i}", link=f"https://boards.greenhouse.io/e/jobs/{i}",
+                   fonte="greenhouse:e", candidatura="externa") for i in range(5)]
+        ok, fora = b.processar(li + gh, "", maximo=4)
+        self.assertEqual([v["titulo"] for v in ok], ["LI 0", "LI 1", "GH 0", "GH 1"])
+        self.assertEqual(len(fora), 6)
+        self.assertTrue(all("rodízio" in d["motivo"] for d in fora[-6:]))
+
+    def test_fonte_com_pouca_vaga_repassa_a_sobra_a_outra(self):
+        li = [vaga(titulo=f"LI {i}", link=f"https://www.linkedin.com/jobs/view/{100000 + i}/") for i in range(5)]
+        gh = [vaga(titulo="GH 0", empresa="Emp 0", link="https://boards.greenhouse.io/e/jobs/0",
+                   fonte="greenhouse:e", candidatura="externa")]
+        ok, _ = b.processar(li + gh, "", maximo=4)
+        self.assertEqual(sorted(v["titulo"] for v in ok), ["GH 0", "LI 0", "LI 1", "LI 2"])
+
+    def test_rodizio_nao_muda_a_ordem_quando_ha_so_uma_fonte(self):
+        vs = [vaga(titulo=f"Vaga {i}", link=f"https://x/{i}") for i in range(1, 5)]
+        ok, _ = b.processar(vs, "", maximo=2)
+        self.assertEqual([v["titulo"] for v in ok], ["Vaga 1", "Vaga 2"])
+
+    def test_render_mostra_fontes_secundarias(self):
+        ats = vaga(link=self.ATS, fonte="greenhouse:beta", candidatura="externa")
+        li = vaga(link=self.LI, fonte="linkedin")
+        ok, fora = b.processar([li, ats], "")
+        txt = b.render(ok, "2026-11-08", fora, DESDE)
+        self.assertIn("Também encontrada em: linkedin", txt)
 
 
 class Candidatos(unittest.TestCase):
