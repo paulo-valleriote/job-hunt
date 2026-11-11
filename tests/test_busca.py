@@ -557,7 +557,7 @@ class ColetaGreenhouse(unittest.TestCase):
 
     def test_fonte_de_ats_sem_adaptador_nao_e_consultada(self):
         fake = Fake({})
-        self.assertEqual(self.coletar([{**ACME, "ats": "lever", "token": "neon"}], fake), ([], []))
+        self.assertEqual(self.coletar([{**ACME, "ats": "ashby", "token": "nubank"}], fake), ([], []))
         self.assertEqual(fake.chamadas, [])
 
     def test_elegibilidade_vem_so_do_texto_de_localizacao(self):
@@ -593,6 +593,97 @@ class ColetaGreenhouse(unittest.TestCase):
         ok, fora = b.processar(vagas, "", desde=date(2026, 11, 1), hoje=HOJE)
         self.assertEqual(ok, [])
         self.assertEqual(fora[0]["motivo"], "sem data de publicação verificada")
+
+
+LEVER_URL = "https://api.lever.co/v0/postings/{}?mode=json&limit=100"
+# 2026-11-05T00:00:00Z em milissegundos (createdAt do Lever é epoch em ms).
+LEVER_2026_11_05 = 1793836800000
+
+
+def _lever_vaga(i, texto, local, criada=LEVER_2026_11_05, atualizada=None):
+    return {"id": i, "text": texto, "hostedUrl": f"https://jobs.lever.co/neon/{i}",
+            "applyUrl": f"https://jobs.lever.co/neon/{i}/apply", "createdAt": criada,
+            "updatedAt": atualizada, "categories": {"location": local, "allLocations": [local]},
+            "workplaceType": "remote", "country": "BR", "descriptionPlain": "DESCRIÇÃO COMPLETA NÃO GRAVAR",
+            "descriptionBodyPlain": "DESCRIÇÃO COMPLETA NÃO GRAVAR", "additionalPlain": "NÃO GRAVAR"}
+
+
+# Resposta gravada (fictícia) do endpoint público de postings do Lever (lista em JSON).
+LEVER_OK = json.dumps([_lever_vaga("a1", "Engenheiro Backend", "São Paulo, Brasil"),
+                       _lever_vaga("a2", "Backend Engineer", "Remoto"),
+                       _lever_vaga("a3", "Staff Engineer", "Remote - Brazil", atualizada=1794311022391)])
+NEON = {"empresa": "Neon", "ats": "lever", "token": "neon", "evidencia_url": "https://neon.com.br/carreiras",
+        "verificado_em": "2026-11-11", "vinculo": "pagina_oficial"}
+
+
+class ColetaLever(unittest.TestCase):
+    def coletar(self, fontes, fake):
+        return co.coletar(fontes, fake, pausa=(0, 0), sleep=lambda s: None)
+
+    def test_sucesso_mapeia_para_o_formato_comum(self):
+        vagas, falhas = self.coletar([NEON], Fake({LEVER_URL.format("neon"): LEVER_OK}))
+        self.assertEqual(falhas, [])
+        self.assertEqual([v["titulo"] for v in vagas], ["Engenheiro Backend", "Backend Engineer", "Staff Engineer"])
+        v = vagas[0]
+        self.assertEqual((v["empresa"], v["link"], v["local"], v["data"]),
+                         ("Neon", "https://jobs.lever.co/neon/a1", "São Paulo, Brasil", "2026-11-05"))
+        self.assertEqual((v["fonte"], v["candidatura"], v["status"]), ("lever:neon", "externa", "aberta"))
+        self.assertEqual((v["elegibilidade"], v["modalidade"]), ("brasil", ""))
+        self.assertEqual(vagas[1]["elegibilidade"], "nao_informada")
+        self.assertEqual(vagas[1]["modalidade"], "remoto")
+        self.assertEqual(b.validar_vagas(vagas), [])
+
+    def test_data_vem_de_created_at_e_nao_da_atualizacao(self):
+        vagas, _ = self.coletar([NEON], Fake({LEVER_URL.format("neon"): LEVER_OK}))
+        self.assertEqual(vagas[2]["data"], "2026-11-05")
+
+    def test_nao_grava_descricao_completa(self):
+        vagas, _ = self.coletar([NEON], Fake({LEVER_URL.format("neon"): LEVER_OK}))
+        for v in vagas:
+            with self.subTest(titulo=v["titulo"]):
+                self.assertNotIn("descriptionPlain", v)
+                self.assertFalse(v.get("requisitos"))
+                self.assertNotIn("NÃO GRAVAR", json.dumps(v, ensure_ascii=False))
+
+    def test_pede_so_o_token_publico(self):
+        fake = Fake({LEVER_URL.format("neon"): LEVER_OK})
+        self.coletar([NEON], fake)
+        self.assertEqual(fake.chamadas, [LEVER_URL.format("neon")])
+
+    def test_404_e_erro_viram_falha_e_a_rodada_segue(self):
+        fontes = [{**NEON, "token": t} for t in ("x", "neon")]
+        fake = Fake({
+            LEVER_URL.format("x"): urllib.error.HTTPError(LEVER_URL.format("x"), 404, "Not Found", None, None),
+            LEVER_URL.format("neon"): LEVER_OK,
+        })
+        vagas, falhas = self.coletar(fontes, fake)
+        self.assertEqual(len(vagas), 3)
+        self.assertEqual(falhas, [{"fonte": "lever:x", "motivo": "HTTP 404"}])
+
+    def test_resposta_que_nao_e_lista_vira_falha(self):
+        vagas, falhas = self.coletar([NEON], Fake({LEVER_URL.format("neon"): '{"ok": false}'}))
+        self.assertEqual(vagas, [])
+        self.assertEqual([f["fonte"] for f in falhas], ["lever:neon"])
+
+    def test_lista_vazia_nao_e_falha(self):
+        self.assertEqual(self.coletar([NEON], Fake({LEVER_URL.format("neon"): "[]"})), ([], []))
+
+    def test_sem_data_de_criacao_vira_sem_data_publicacao(self):
+        sem = json.dumps([_lever_vaga("s1", "Dev", "Brasil", criada=None)])
+        vagas, _ = self.coletar([NEON], Fake({LEVER_URL.format("neon"): sem}))
+        ok, fora = b.processar(vagas, "", desde=date(2026, 11, 1), hoje=HOJE)
+        self.assertEqual(ok, [])
+        self.assertEqual(fora[0]["motivo"], "sem data de publicação verificada")
+
+    def test_processar_aplica_as_regras_comuns_as_vagas_do_lever(self):
+        vagas, _ = self.coletar([NEON], Fake({LEVER_URL.format("neon"): LEVER_OK}))
+        ok, fora = b.processar(vagas, "", desde=date(2026, 11, 1), hoje=HOJE, remoto=True,
+                               titulos_excluidos=["Staff"])
+        self.assertEqual(ok, [])
+        motivos = {d["titulo"]: d["motivo"] for d in fora}
+        self.assertEqual(motivos["Engenheiro Backend"], "modalidade não verificada")
+        self.assertIn("não confirma", motivos["Backend Engineer"])
+        self.assertIn("nível acima", motivos["Staff Engineer"])
 
 
 class ColetadasNaCli(unittest.TestCase):

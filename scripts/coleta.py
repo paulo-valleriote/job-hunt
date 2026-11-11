@@ -1,12 +1,13 @@
 """Coleta de vagas pelas fontes de ATS (fontes_ats.json) no formato comum de processar().
 
-Um adaptador por ATS (hoje: Greenhouse; Lever, Ashby e Himalayas entram depois, sem mexer nas
+Um adaptador por ATS (hoje: Greenhouse e Lever; Ashby e Himalayas entram depois, sem mexer nas
 regras de descarte, que ficam em busca.processar()). O fetcher é injetável (seam único): em
 produção é um GET público sem chave; nos testes, respostas gravadas. Só o token público vai na
 URL; a descrição completa da vaga nunca é lida nem gravada. Falha de uma fonte (timeout, 404,
 5xx, JSON inválido) vira entrada em "falhas" e a rodada segue. Pausa entre chamadas: 1 a 2 s.
 """
 import json, random, re, time, unicodedata, urllib.error, urllib.request
+from datetime import datetime, timezone
 
 TIMEOUT = 15
 PAUSA = (1.0, 2.0)  # segundos entre uma fonte e a seguinte
@@ -85,7 +86,39 @@ class Greenhouse:
         return out
 
 
-ADAPTADORES = {a.ats: a for a in (Greenhouse,)}
+class Lever:
+    """API pública de postings: api.lever.co/v0/postings/{token}?mode=json (sem chave).
+    createdAt é epoch em ms (data de publicação); updatedAt não é usada. Uma página de até 100
+    vagas por rodada (limit=100); a paginação por skip foi medida, mas não é seguida aqui."""
+    ats = "lever"
+
+    @staticmethod
+    def url(fonte):
+        return f"https://api.lever.co/v0/postings/{fonte['token']}?mode=json&limit=100"
+
+    @staticmethod
+    def vagas(texto, fonte):
+        jobs = json.loads(texto)
+        if not isinstance(jobs, list):
+            raise ValueError("resposta sem lista de vagas")
+        out = []
+        for j in jobs:
+            if not (j.get("text") and j.get("hostedUrl")):
+                continue
+            local = (j.get("categories") or {}).get("location") or ""
+            criada = j.get("createdAt")
+            data = datetime.fromtimestamp(criada / 1000, timezone.utc).date().isoformat() if criada else ""
+            out.append({
+                "titulo": j["text"], "empresa": fonte["empresa"], "link": j["hostedUrl"],
+                "local": local, "data": data,
+                "requisitos": "", "evidencia": f"Localização no Lever: {local or 'não informada'}",
+                "fonte": f"{Lever.ats}:{fonte['token']}", "candidatura": "externa", "status": "aberta",
+                "modalidade": modalidade_do_local(local), "elegibilidade": elegibilidade_do_local(local),
+            })
+        return out
+
+
+ADAPTADORES = {a.ats: a for a in (Greenhouse, Lever)}
 
 
 def _motivo(e):
