@@ -1,6 +1,6 @@
 """Lista versionada de tokens de ATS (fontes_ats.json): empresa, ats, token e evidência.
 Só entra token com evidência; sem evidência a entrada é recusada. Sem dado pessoal."""
-import json, re
+import json, re, sys
 from datetime import date
 from pathlib import Path
 
@@ -45,3 +45,50 @@ def carregar_fontes(arquivo=ARQUIVO):
     if probs:
         raise ValueError("; ".join(probs))
     return entradas
+
+
+class SemAprovacao(Exception):
+    """Acréscimo sem aprovação explícita do usuário (flag --aprovado)."""
+
+
+def acrescentar(entrada, aprovado, arquivo=ARQUIVO):
+    """Grava uma entrada nova na lista só com aprovação explícita e se passar na validação.
+    Recusa sem evidência, vínculo ou ATS inválidos, evidência que não seja https e duplicata."""
+    if not aprovado:
+        raise SemAprovacao("nenhuma entrada é gravada sem aprovação explícita do usuário")
+    probs = validar_fontes([entrada])
+    if str(entrada.get("evidencia_url") or "").strip() and not str(entrada["evidencia_url"]).startswith("https://"):
+        probs.append("fonte: evidencia_url deve ser https")
+    lista = json.loads(Path(arquivo).read_text(encoding="utf-8"))
+    if any(e.get("ats") == entrada.get("ats") and e.get("token") == entrada.get("token") for e in lista):
+        probs.append(f"fonte: já existe {entrada.get('ats')}/{entrada.get('token')}")
+    if probs:
+        raise ValueError("; ".join(probs))
+    lista.append(entrada)
+    Path(arquivo).write_text(json.dumps(lista, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return entrada
+
+
+def main(argv=None):
+    import argparse
+    p = argparse.ArgumentParser(description="Lista de tokens de ATS (fontes_ats.json).")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    a = sub.add_parser("acrescentar", help="acrescenta uma entrada aprovada pelo usuário")
+    a.add_argument("--json", required=True, help="entrada completa como objeto JSON")
+    a.add_argument("--arquivo", default=str(ARQUIVO))
+    a.add_argument("--aprovado", action="store_true", help="o usuário aprovou esta entrada")
+    args = p.parse_args(argv)
+    try:
+        acrescentar(json.loads(args.json), aprovado=args.aprovado, arquivo=args.arquivo)
+    except SemAprovacao as e:
+        print(f"recusado: {e}", file=sys.stderr)
+        return 2
+    except (ValueError, json.JSONDecodeError) as e:
+        print(f"recusado: {e}", file=sys.stderr)
+        return 1
+    print("entrada acrescentada")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
