@@ -24,6 +24,17 @@ MARCAS_OUTRO_PAIS = ("usa", "us", "united states", "eua", "estados unidos", "uk"
                      "netherlands", "holanda", "ireland", "irlanda", "australia", "india")
 
 
+# Países da LATAM aceitos como elegibilidade "latam" quando o endereço estruturado é remoto (Ashby).
+PAISES_LATAM = {"mexico", "colombia", "argentina", "chile", "peru", "uruguay", "paraguay", "bolivia",
+                "ecuador", "venezuela", "costa rica", "panama", "guatemala", "el salvador", "honduras",
+                "nicaragua", "republica dominicana", "dominican republic"}
+
+
+def _outro_pais_no_texto(texto, aceitos):
+    """Algum país citado no texto de localização que não é um dos `aceitos` (já sem acento)."""
+    return _tem(_sem_acento(texto), tuple(m for m in MARCAS_OUTRO_PAIS if m not in aceitos))
+
+
 def http_get(url):
     """Fetcher de produção: GET público, sem chave e sem dado pessoal."""
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
@@ -163,17 +174,22 @@ class Ashby:
             for s in j.get("secondaryLocations") or []:
                 if isinstance(s, dict) and (p := _pais_do_endereco(s.get("address"))):
                     paises.append(("secondaryLocations.addressCountry", p))
+            modalidade = MODALIDADE_ASHBY.get(str(j.get("workplaceType") or "").lower())
+            if modalidade is None:
+                modalidade = "remoto" if j.get("isRemote") is True else modalidade_do_local(local)
             brasil = [(c, p) for c, p in paises if _sem_acento(p).strip() in ("brazil", "brasil")]
+            latam = [(c, p) for c, p in paises if _sem_acento(p).strip() in PAISES_LATAM]
             if brasil:
                 elegibilidade, evidencia = "brasil", f"{brasil[0][0]}: {brasil[0][1]}"
+            elif paises and modalidade == "remoto" and len(latam) == len(paises) and not _outro_pais_no_texto(
+                    local, {_sem_acento(p).strip() for _, p in latam}):
+                # remoto com endereço só em país da LATAM e sem outro país citado no texto
+                elegibilidade, evidencia = "latam", f"{latam[0][0]}: {latam[0][1]}"
             elif paises:
                 elegibilidade, evidencia = "nao_informada", f"{paises[0][0]}: {paises[0][1]}"
             else:
                 elegibilidade = elegibilidade_do_local(local)
                 evidencia = f"location: {local or 'não informada'}"
-            modalidade = MODALIDADE_ASHBY.get(str(j.get("workplaceType") or "").lower())
-            if modalidade is None:
-                modalidade = "remoto" if j.get("isRemote") is True else modalidade_do_local(local)
             out.append({
                 "titulo": j["title"], "empresa": fonte["empresa"], "link": j["jobUrl"],
                 "local": local, "data": (j.get("publishedAt") or "")[:10],

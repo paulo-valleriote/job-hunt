@@ -426,12 +426,12 @@ class Cli(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("link", r.stderr)
 
-    def test_gravar_limita_a_20_por_padrao_e_aceita_max(self):
-        vs = [vaga(titulo=f"Vaga {i}", link=f"https://x/{i}") for i in range(1, 23)]
+    def test_gravar_limita_a_50_por_padrao_e_aceita_max(self):
+        vs = [vaga(titulo=f"Vaga {i}", link=f"https://x/{i}") for i in range(1, 53)]
         r, out = self.grava(vs)
-        self.assertIn("20 vaga(s)", r.stdout)
+        self.assertIn("50 vaga(s)", r.stdout)
         txt = (out / "2026-11-08-busca.md").read_text()
-        self.assertIn("Vaga 22 | Beta SA | acima do limite de 20", txt)
+        self.assertIn("Vaga 52 | Beta SA | acima do limite de 50", txt)
         r, out = self.grava(vs, "--max", "5")
         self.assertIn("5 vaga(s)", r.stdout)
 
@@ -827,6 +827,34 @@ class ColetaAshby(unittest.TestCase):
         self.assertEqual((v["elegibilidade"], v["modalidade"]), ("brasil", "presencial"))
         self.assertEqual(v["evidencia"], "secondaryLocations.addressCountry: Brazil")
 
+    def _uma_vaga(self, **kw):
+        resp = json.dumps({"jobs": [_ab_job(9, "Dev Remoto", kw.pop("local", "Remote"), **kw)]}, ensure_ascii=False)
+        vagas, _ = self.coletar([ACME_ASHBY], Fake({ASHBY_URL.format("acme"): resp}))
+        return vagas[0]
+
+    def test_remota_com_endereco_latam_e_latam(self):
+        for pais in ("Mexico", "Colombia", "Argentina"):
+            with self.subTest(pais=pais):
+                v = self._uma_vaga(pais=pais, remoto=True, modo="Remote")
+                self.assertEqual((v["elegibilidade"], v["modalidade"]), ("latam", "remoto"))
+                self.assertEqual(v["evidencia"], f"addressCountry: {pais}")
+
+    def test_remota_com_endereco_eua_continua_nao_informada(self):
+        v = self._uma_vaga(pais="United States", remoto=True, modo="Remote")
+        self.assertEqual(v["elegibilidade"], "nao_informada")
+
+    def test_latam_com_outro_pais_no_texto_do_local_nao_vira_latam(self):
+        v = self._uma_vaga(local="Remote - US/Mexico", pais="Mexico", remoto=True, modo="Remote")
+        self.assertEqual(v["elegibilidade"], "nao_informada")
+
+    def test_latam_nao_remota_nao_vira_latam(self):
+        v = self._uma_vaga(pais="Mexico", remoto=False, modo="OnSite")
+        self.assertEqual(v["elegibilidade"], "nao_informada")
+
+    def test_brasil_continua_brasil_mesmo_com_latam_no_secundario(self):
+        v = self._uma_vaga(pais="Brazil", remoto=True, modo="Remote", sec=[_ab_sec("Remote", "Mexico")])
+        self.assertEqual((v["elegibilidade"], v["evidencia"]), ("brasil", "addressCountry: Brazil"))
+
     def test_sem_campo_estruturado_usa_o_texto_do_local_como_fallback(self):
         v = self.vagas_do_acme()["Data Engineer"]
         self.assertEqual((v["elegibilidade"], v["modalidade"]), ("brasil", "remoto"))
@@ -968,6 +996,7 @@ if __name__ == "__main__":
 
 # --- Himalayas (ticket 06): agregador com atribuição, cache de 24 h e paginação por page ---
 HIMA_BASE = "https://himalayas.app/jobs/api/search?country=Brazil"
+HIMA_WW = "https://himalayas.app/jobs/api/search?worldwide=true"
 HIMA_EPOCH = 1794317072  # 2026-11-10 (pubDate)
 AGORA = 1794400000  # relógio injetado
 DIA = 24 * 3600
@@ -994,7 +1023,7 @@ class _Rede:
 
     def __call__(self, url):
         self.chamadas.append(url)
-        r = self.respostas[url]
+        r = self.respostas.get(url, _hima_pagina([]))  # sem resposta gravada = página vazia
         if isinstance(r, Exception):
             raise r
         return r
@@ -1068,6 +1097,10 @@ class HimalayasColeta(unittest.TestCase):
         return hm.coletar(rede, pausa=(0, 0), sleep=lambda s: None, agora=relogio or _Relogio(),
                           cache=Path(tmp) / "himalayas.json", **kw)
 
+    @staticmethod
+    def de_brasil(rede):
+        return [u for u in rede.chamadas if "worldwide" not in u]
+
     def test_paginacao_segue_page_ate_o_total_e_pausa_entre_paginas(self):
         p1 = [_hima_job(i) for i in range(20)]
         p2 = [_hima_job(i) for i in range(20, 25)]
@@ -1079,16 +1112,16 @@ class HimalayasColeta(unittest.TestCase):
                                        cache=Path(d) / "himalayas.json")
         self.assertEqual(len(vagas), 25)
         self.assertEqual(falhas, [])
-        self.assertEqual(rede.chamadas, [HIMA_BASE, HIMA_BASE + "&page=2"])
-        self.assertEqual(len(pausas), 1)
-        self.assertTrue(1 <= pausas[0] <= 2)
+        self.assertEqual(self.de_brasil(rede), [HIMA_BASE, HIMA_BASE + "&page=2"])
+        self.assertEqual(len(pausas), 2)  # uma entre as páginas e uma entre as duas consultas
+        self.assertTrue(all(1 <= p <= 2 for p in pausas))
 
     def test_para_no_teto_de_paginas(self):
         rede = _Rede({HIMA_BASE: _hima_pagina([_hima_job(1)], total=999),
                       HIMA_BASE + "&page=2": _hima_pagina([_hima_job(2)], total=999)})
         with tempfile.TemporaryDirectory() as d:
             self.coletar(rede, d, paginas=2)
-        self.assertEqual(len(rede.chamadas), 2)
+        self.assertEqual(self.de_brasil(rede), [HIMA_BASE, HIMA_BASE + "&page=2"])
 
     def test_pagina_vazia_encerra(self):
         rede = _Rede({HIMA_BASE: _hima_pagina([_hima_job(1)], total=50),
@@ -1096,7 +1129,7 @@ class HimalayasColeta(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             vagas, _ = self.coletar(rede, d)
         self.assertEqual(len(vagas), 1)
-        self.assertEqual(len(rede.chamadas), 2)
+        self.assertEqual(len(self.de_brasil(rede)), 2)
 
     def test_erro_de_pagina_vira_falha_mantem_o_que_veio_e_nao_grava_cache(self):
         rede = _Rede({HIMA_BASE: _hima_pagina([_hima_job(1)], total=30),
@@ -1114,16 +1147,54 @@ class HimalayasColeta(unittest.TestCase):
             self.assertEqual(self.coletar(rede, d), ([], [{"fonte": "himalayas",
                                                            "motivo": "resposta inválida (JSON)"}]))
 
+    def test_une_brasil_e_worldwide_sem_repetir_link(self):
+        rede = _Rede({HIMA_BASE: _hima_pagina([_hima_job(1), _hima_job(2)]),
+                      HIMA_WW: _hima_pagina([_hima_job(2, restricoes=()), _hima_job(3, restricoes=())])})
+        with tempfile.TemporaryDirectory() as d:
+            vagas, falhas = self.coletar(rede, d)
+        self.assertEqual(falhas, [])
+        self.assertEqual(len(vagas), 3)
+        self.assertEqual({v["titulo"] for v in vagas}, {"Dev Backend 1", "Dev Backend 2", "Dev Backend 3"})
+        self.assertEqual({v["titulo"]: v["elegibilidade"] for v in vagas}["Dev Backend 2"], "brasil")
+
+    def test_ordena_por_data_mais_recente_primeiro(self):
+        rede = _Rede({HIMA_BASE: _hima_pagina([_hima_job(1, pubDate=HIMA_EPOCH - 5 * DIA),
+                                               _hima_job(2, pubDate=HIMA_EPOCH),
+                                               _hima_job(3, pubDate=HIMA_EPOCH - DIA)])})
+        with tempfile.TemporaryDirectory() as d:
+            vagas, _ = self.coletar(rede, d)
+        self.assertEqual([v["titulo"] for v in vagas], ["Dev Backend 2", "Dev Backend 3", "Dev Backend 1"])
+
+    def test_para_quando_a_pagina_nao_tem_vaga_na_janela(self):
+        rede = _Rede({HIMA_BASE: _hima_pagina([_hima_job(1)], total=999),
+                      HIMA_BASE + "&page=2": _hima_pagina([_hima_job(2, pubDate=HIMA_EPOCH - 10 * DIA)], total=999),
+                      HIMA_BASE + "&page=3": _hima_pagina([_hima_job(3)], total=999)})
+        with tempfile.TemporaryDirectory() as d:
+            self.coletar(rede, d, desde=date(2026, 11, 9), paginas=5)
+        self.assertEqual(self.de_brasil(rede), [HIMA_BASE, HIMA_BASE + "&page=2"])
+
     def test_dentro_de_24_h_usa_cache_e_nao_chama_a_rede(self):
-        rede = _Rede({HIMA_BASE: _hima_pagina([_hima_job(1)])})
+        rede = _Rede({HIMA_BASE: _hima_pagina([_hima_job(1)]),
+                      HIMA_WW: _hima_pagina([_hima_job(2, restricoes=())])})
         relogio = _Relogio()
         with tempfile.TemporaryDirectory() as d:
             primeira, _ = self.coletar(rede, d, relogio)
             relogio.t += 23 * 3600
-            segunda, falhas = self.coletar(_Rede({}), d, relogio)  # rede proibida
-        self.assertEqual(len(rede.chamadas), 1)
+            proibida = _Rede({})
+            segunda, falhas = self.coletar(proibida, d, relogio)
+        self.assertEqual(len(rede.chamadas), 2)
+        self.assertEqual(proibida.chamadas, [])  # rede proibida: nenhuma chamada
         self.assertEqual(segunda, primeira)
         self.assertEqual(falhas, [])
+
+    def test_cache_so_vale_para_a_mesma_janela(self):
+        rede = _Rede({HIMA_BASE: _hima_pagina([_hima_job(1)])})
+        relogio = _Relogio()
+        with tempfile.TemporaryDirectory() as d:
+            self.coletar(rede, d, relogio, desde=date(2026, 11, 9))
+            n = len(rede.chamadas)
+            self.coletar(rede, d, relogio, desde=date(2026, 11, 10))
+        self.assertGreater(len(rede.chamadas), n)
 
     def test_depois_de_24_h_chama_a_rede_de_novo(self):
         rede = _Rede({HIMA_BASE: _hima_pagina([_hima_job(1)])})
@@ -1132,7 +1203,7 @@ class HimalayasColeta(unittest.TestCase):
             self.coletar(rede, d, relogio)
             relogio.t += 25 * 3600
             self.coletar(rede, d, relogio)
-        self.assertEqual(len(rede.chamadas), 2)
+        self.assertEqual(len(rede.chamadas), 4)  # duas consultas em cada rodada
 
     def test_cache_nao_guarda_descricao(self):
         rede = _Rede({HIMA_BASE: _hima_pagina([_hima_job(1)])})
@@ -1148,7 +1219,7 @@ class HimalayasColeta(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "himalayas.json").write_text("{quebrado", encoding="utf-8")
             vagas, _ = self.coletar(rede, d)
-        self.assertEqual(len(rede.chamadas), 1)
+        self.assertEqual(len(rede.chamadas), 2)
         self.assertEqual(len(vagas), 1)
 
 
@@ -1209,7 +1280,7 @@ class PausaAntesDoHimalayas(unittest.TestCase):
             vagas, falhas = b.coletar_todas([ACME], fetch=fetch, sleep=lambda s: eventos.append(("sleep", s)),
                                             cache=Path(d) / "himalayas.json")
         self.assertEqual(falhas, [])
-        self.assertEqual([e[0] for e in eventos], ["get", "sleep", "get"])
+        self.assertEqual([e[0] for e in eventos], ["get", "sleep", "get", "sleep", "get"])
         self.assertIn("greenhouse", eventos[0][1])
         self.assertIn("himalayas", eventos[2][1])
         self.assertTrue(1 <= eventos[1][1] <= 2)
@@ -1224,7 +1295,18 @@ class PausaAntesDoHimalayas(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             b.coletar_todas([], fetch=fetch, sleep=lambda s: eventos.append(("sleep", s)),
                             cache=Path(d) / "himalayas.json")
-        self.assertEqual([e[0] for e in eventos], ["get"])
+        self.assertEqual([e[0] for e in eventos], ["get", "sleep", "get"])  # pausa entre as consultas
+
+
+class JanelaNaColeta(unittest.TestCase):
+    def test_coletar_todas_repassa_a_janela_ao_himalayas(self):
+        rede = _Rede({HIMA_BASE: _hima_pagina([_hima_job(1)], total=999),
+                      HIMA_BASE + "&page=2": _hima_pagina([_hima_job(2, pubDate=HIMA_EPOCH - 10 * DIA)], total=999),
+                      HIMA_BASE + "&page=3": _hima_pagina([_hima_job(3)], total=999)})
+        with tempfile.TemporaryDirectory() as d:
+            b.coletar_todas([], fetch=rede, sleep=lambda s: None, cache=Path(d) / "himalayas.json",
+                            desde=date(2026, 11, 9))
+        self.assertNotIn(HIMA_BASE + "&page=3", rede.chamadas)
 
 
 class MotivoPublico(unittest.TestCase):

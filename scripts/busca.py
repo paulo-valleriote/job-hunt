@@ -25,7 +25,7 @@ from fontes import ARQUIVO as FONTES_ARQUIVO, ATS as ATS_FONTES, carregar_fontes
 
 ROOT = Path(__file__).resolve().parent.parent
 JANELA_PADRAO, JANELA_MAX = 7, 30
-MAX_VAGAS = 20  # o método pede de 10 a 20 vagas por rodada
+MAX_VAGAS = 50  # teto pré-triagem de vagas gravadas por rodada (rodízio entre fontes)
 # Parâmetros da URL final do LinkedIn que pedimos ou que são só navegação; o resto é filtro dele.
 PARAMS_ESPERADOS = {"keywords", "location", "geoId", "f_TPR", "f_WT", "sortBy", "currentJobId",
                     "origin", "lipi", "skipRedirect", "infoNotice", "referralSearchId"}
@@ -164,7 +164,7 @@ def _prioridade(v):
 
 
 # Decisões (spec fontes-gratuitas-vagas, questões abertas 2 e 4): na duplicata vence o ATS da
-# empresa e o agregador fica como fonte secundária; o teto de 20 é dividido por fonte (rodízio).
+# empresa e o agregador fica como fonte secundária; o teto (MAX_VAGAS, 50) é dividido por fonte (rodízio).
 def _rodizio(cands, n):
     """Índices de até n candidatas, em rodízio entre as fontes (uma de cada fonte por vez, na ordem
     de coleta). Cota por fonte = parcela igual do teto; a sobra de uma fonte vai para as outras."""
@@ -315,13 +315,14 @@ def validar_vagas(vagas):
     return probs
 
 
-def coletar_todas(fontes, fetch=coleta.http_get, sleep=time.sleep, cache=himalayas.CACHE_ARQUIVO):
-    """Fontes de ATS e, depois, o Himalayas. Se algum ATS foi consultado, espera 1 a 2 s antes da
-    primeira chamada do Himalayas (contadores de pausa de coleta.py e himalayas.py são independentes)."""
+def coletar_todas(fontes, fetch=coleta.http_get, sleep=time.sleep, cache=himalayas.CACHE_ARQUIVO, desde=None):
+    """Fontes de ATS e, depois, o Himalayas (janela `desde`: para a paginação fora dela). Se algum ATS
+    foi consultado, espera 1 a 2 s antes da primeira chamada do Himalayas (contadores de pausa de
+    coleta.py e himalayas.py são independentes)."""
     vagas, falhas = coleta.coletar(fontes, fetch=fetch)
     if any(f.get("ats") in coleta.ADAPTADORES for f in fontes):
         sleep(random.uniform(*coleta.PAUSA))
-    hv, hf = himalayas.coletar(fetch, sleep=sleep, cache=cache)  # fonte fixa, sem fontes_ats.json
+    hv, hf = himalayas.coletar(fetch, sleep=sleep, cache=cache, desde=desde)  # fonte fixa, sem fontes_ats.json
     return vagas + hv, falhas + hf
 
 
@@ -437,7 +438,7 @@ def main(argv=None):
         print("\n".join(f"{k}={v}" for k, v in extras.items()) or "nenhum filtro extra")
         return 0
     if a.cmd == "coletar":
-        vagas, falhas = coletar_todas(carregar_fontes(a.fontes))
+        vagas, falhas = coletar_todas(carregar_fontes(a.fontes), desde=desde)
         print(json.dumps({"vagas": vagas, "falhas": falhas}, ensure_ascii=False, indent=1))
         return 0
     if a.cmd == "candidatos":

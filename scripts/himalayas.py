@@ -3,40 +3,51 @@
 Isolado de coleta.py: Himalayas não é ATS de token, então não entra em fontes_ats.json. A ativação
 é fixa: o comando 'coletar' do busca.py chama coletar() uma vez por rodada e soma o resultado.
 
+Consultas (duas, em sequência, cada uma paginada): country=Brazil e worldwide=true. As vagas são
+unidas e deduplicadas pelo link sem query string. Só os parâmetros country, worldwide e page são
+enviados (nada pessoal).
+
 Semântica medida (GET público, sem chave, 2026-11-11):
 - country=Brazil devolve vagas com "Brazil" em locationRestrictions e vagas com lista vazia
   (= worldwide): totalCount 5.835; amostra de 20 com 9 "Brazil" e 11 vazias; nenhuma só com outros países.
-- worldwide=true combinado com country=Brazil NÃO soma: devolve só as 820 worldwide. Por isso a
-  consulta usa só country=Brazil (worldwide já está dentro dela).
-- Paginação: /jobs/api/search pagina por ?page=N (20 por página). O nextCursor só existe em
-  /jobs/api (feed geral, sem filtro de país testado). Decisão: page=N, isolada em url().
+- worldwide=true sozinho: totalCount 820, todas com locationRestrictions vazia. Na primeira página,
+  só 11 de 20 já estão na primeira página de country=Brazil, então a união acrescenta vagas.
+- worldwide=true combinado com country=Brazil NÃO soma: devolve só as 820 worldwide (medido antes).
+  Por isso as duas consultas são separadas e unidas no código.
+- Ordenação: sort=recent é aceito mas a resposta é idêntica à padrão (não ordena). sort=date,
+  sort=newest, sort=pubDate e sort=latest devolvem 400 "Invalid sort". Não há parâmetro de ordenação
+  por data. A ordem da página é só aproximada (página 1 mistura datas de 11/11 a 17/10; página 2 de
+  country=Brazil vem de 11/11 para 10/11). Por isso a coleta ordena o resultado por pubDate
+  decrescente no código, e a paginação para ao encontrar uma página sem vaga dentro da janela `desde`.
+- Paginação: ?page=N (20 por página). O nextCursor só aparece em /jobs/api (feed geral, sem filtro).
 - Data de publicação: pubDate (epoch em segundos). expiryDate = pubDate + 30 ou 60 dias na amostra,
   então pubDate é a publicação e não uma atualização. Não foi possível provar que pubDate nunca muda.
 
 Elegibilidade por locationRestrictions: vazia = mundo; contém Brazil = brasil; só outros = restrita.
 Gravado por vaga: metadados, link (applicationLink), atribuição "Fonte: Himalayas" e evidência
 curta. Nunca description nem excerpt. Cache de 24 h em private/cache/himalayas.json (ignorado pelo
-git), guardando só as vagas normalizadas; dentro da janela não há chamada à rede.
+git), com chave que inclui as consultas, o teto de páginas e a janela `desde`; dentro da janela não
+há chamada à rede.
 """
 import json, random, time, urllib.parse
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import coleta
 
 ROOT = Path(__file__).resolve().parent.parent
 BASE = "https://himalayas.app/jobs/api/search"
-FILTROS = {"country": "Brazil"}
+FILTROS = ({"country": "Brazil"}, {"worldwide": "true"})  # consultas separadas, unidas por link
 FONTE = "himalayas"
 ATRIBUICAO = "Fonte: Himalayas"
 JANELA_CACHE = 24 * 3600
-MAX_PAGINAS = 5  # 100 vagas por rodada; a ordem de /search não foi medida, então o teto é fixo
+MAX_PAGINAS = 5  # 100 vagas por consulta e por rodada (são 2 consultas)
 PAUSA = (1.0, 2.0)
 CACHE_ARQUIVO = ROOT / "private/cache/himalayas.json"
 
 
-def url(pagina=1):
-    params = dict(FILTROS)
+def url(pagina=1, filtro=FILTROS[0]):
+    params = dict(filtro)
     if pagina > 1:
         params["page"] = pagina
     return f"{BASE}?{urllib.parse.urlencode(params)}"
@@ -93,44 +104,70 @@ def normalizar(texto, agora):
     return pagina(texto, agora)[0]
 
 
-def _ler_cache(arquivo, agora):
+def _chave_link(link):
+    return (link or "").split("?", 1)[0]
+
+
+def _chave(paginas, desde):
+    """Identifica a rodada: quem muda o conteúdo do cache (consultas, teto, janela) muda a chave."""
+    return json.dumps({"consultas": FILTROS, "paginas": paginas,
+                       "desde": desde.isoformat() if desde else None}, sort_keys=True)
+
+
+def _ler_cache(arquivo, agora, chave):
     try:
         d = json.loads(Path(arquivo).read_text(encoding="utf-8"))
         gerado, vagas = float(d["gerado_em"]), d["vagas"]
     except (OSError, ValueError, KeyError, TypeError):
         return None
-    if not isinstance(vagas, list) or not 0 <= agora() - gerado < JANELA_CACHE:
+    if d.get("chave") != chave or not isinstance(vagas, list) or not 0 <= agora() - gerado < JANELA_CACHE:
         return None
     return vagas
 
 
-def _gravar_cache(arquivo, agora, vagas):
+def _gravar_cache(arquivo, agora, chave, vagas):
     try:
         Path(arquivo).parent.mkdir(parents=True, exist_ok=True)
-        Path(arquivo).write_text(json.dumps({"gerado_em": agora(), "vagas": vagas}, ensure_ascii=False),
-                                 encoding="utf-8")
+        Path(arquivo).write_text(json.dumps({"gerado_em": agora(), "chave": chave, "vagas": vagas},
+                                            ensure_ascii=False), encoding="utf-8")
     except OSError:
         pass  # cache é só economia de rede; falha de escrita não derruba a rodada
 
 
 def coletar(fetch=coleta.http_get, pausa=PAUSA, sleep=time.sleep, agora=time.time,
-            cache=CACHE_ARQUIVO, paginas=MAX_PAGINAS):
-    """Devolve (vagas, falhas). Dentro de 24 h usa o cache e não chama a rede. Falha em uma página
-    vira falha da fonte; o que já veio é mantido, mas não é gravado no cache."""
-    cacheadas = _ler_cache(cache, agora)
+            cache=CACHE_ARQUIVO, paginas=MAX_PAGINAS, desde=None):
+    """Devolve (vagas, falhas), mais recentes primeiro. `desde` (date) é a início da janela: a
+    paginação de cada consulta para na primeira página sem nenhuma vaga com data >= desde.
+    Dentro de 24 h, com a mesma chave, usa o cache e não chama a rede. Falha em uma página vira
+    falha da fonte e a consulta seguinte continua; com falha, nada vai para o cache."""
+    chave = _chave(paginas, desde)
+    cacheadas = _ler_cache(cache, agora, chave)
     if cacheadas is not None:
         return cacheadas, []
-    vagas, visto = [], 0
-    for n in range(1, paginas + 1):
-        if n > 1:
-            sleep(random.uniform(*pausa))
-        try:
-            pv, total, bruto = pagina(fetch(url(n)), agora)
-        except Exception as e:  # uma fonte que falha não derruba a rodada
-            return vagas, [{"fonte": FONTE, "motivo": coleta.motivo_da_falha(e)}]
-        vagas += pv
-        visto += bruto
-        if bruto == 0 or visto >= total:
-            break
-    _gravar_cache(cache, agora, vagas)
-    return vagas, []
+    vagas, falhas, vistos, feitas = [], [], set(), 0
+    limite = desde.isoformat() if desde else None
+    for filtro in FILTROS:
+        visto = 0
+        for n in range(1, paginas + 1):
+            if feitas:
+                sleep(random.uniform(*pausa))
+            feitas += 1
+            try:
+                pv, total, bruto = pagina(fetch(url(n, filtro)), agora)
+            except Exception as e:  # uma fonte que falha não derruba a rodada
+                falhas.append({"fonte": FONTE, "motivo": coleta.motivo_da_falha(e)})
+                break
+            for v in pv:
+                k = _chave_link(v["link"])
+                if k not in vistos:  # união das consultas: a primeira ocorrência fica
+                    vistos.add(k)
+                    vagas.append(v)
+            visto += bruto
+            if bruto == 0 or visto >= total:
+                break
+            if limite and not any(v["data"] and v["data"] >= limite for v in pv):
+                break  # página inteira fora da janela: as seguintes tendem a ser mais antigas
+    vagas.sort(key=lambda v: v["data"] or "", reverse=True)  # sort é estável: empates mantêm a ordem
+    if not falhas:
+        _gravar_cache(cache, agora, chave, vagas)
+    return vagas, falhas
