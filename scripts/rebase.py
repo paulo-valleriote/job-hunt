@@ -179,17 +179,17 @@ def coletar(config, token, fetch=http_get, sleep=time.sleep):
             if not isinstance(itens, list):
                 raise ValueError("data sem lista")
             meta = corpo.get("meta") or {}
+            ultima = not itens or int(meta.get("pagina", pagina)) >= int(meta.get("paginas", pagina))
+            traduzidas = [_traduzir(j) for j in itens]
         except Exception as e:  # uma falha de fonte não derruba a rodada
             falhas.append({"fonte": "rebase",
                            "motivo": f"{_motivo_http(e)}; leitura parou na página {pagina}"})
             break
-        for j in itens:
-            vaga, descarte = _traduzir(j)
+        for vaga, descarte in traduzidas:
             if vaga:
                 vagas.append(vaga)
             else:
                 descartadas.append(descarte)
-        ultima = not itens or int(meta.get("pagina", pagina)) >= int(meta.get("paginas", pagina))
         if ultima:
             break
         pagina += 1

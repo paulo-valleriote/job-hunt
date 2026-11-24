@@ -227,9 +227,35 @@ class Erros(unittest.TestCase):
         self.assertEqual(len(rede.chamadas), 1)
         self.assertIn("429", falhas[0]["motivo"])
 
+    def test_resposta_com_meta_invalida_vira_falha_de_fonte(self):
+        corpo = json.dumps({"data": [job(1)], "meta": {"pagina": "x", "paginas": 2}})
+        vagas, falhas = coletar(Rede({1: corpo}))
+        self.assertEqual(vagas, [])
+        self.assertEqual(len(falhas), 1)
+        self.assertIn("página 1", falhas[0]["motivo"])
+
+    def test_item_que_nao_e_objeto_vira_falha_de_fonte(self):
+        corpo = json.dumps({"data": ["nao-e-objeto"], "meta": {"pagina": 1, "paginas": 1}})
+        vagas, falhas = coletar(Rede({1: corpo}))
+        self.assertEqual(vagas, [])
+        self.assertEqual(len(falhas), 1)
+        self.assertIn("página 1", falhas[0]["motivo"])
+
     def test_token_nunca_aparece_em_motivo_nem_em_saida(self):
-        _, falhas = coletar(Rede({1: http(401)}))
-        self.assertNotIn(TOKEN_FAKE, json.dumps(falhas, ensure_ascii=False))
+        cenarios = [
+            Rede({1: http(401)}),
+            Rede({1: http(403)}),
+            Rede({1: http(500)}),
+            Rede({1: urllib.error.URLError(f"falhou com {TOKEN_FAKE}")}),
+            Rede({1: Exception(f"vazou {TOKEN_FAKE}")}),
+            Rede({1: "{nao json " + TOKEN_FAKE}),
+            Rede({1: http(429, {"Retry-After": "120"})}),
+        ]
+        for rede in cenarios:
+            with self.subTest(erro=rede.respostas[1]):
+                _, falhas = coletar(rede)
+                self.assertTrue(falhas)
+                self.assertNotIn(TOKEN_FAKE, json.dumps(falhas, ensure_ascii=False))
 
 
 class Token(unittest.TestCase):
