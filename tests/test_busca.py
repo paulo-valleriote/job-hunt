@@ -557,6 +557,45 @@ class ColetadasNaCli(unittest.TestCase):
             self.assertIn("# Resumo da rodada", txt)
 
 
+class DescartesDaColeta(unittest.TestCase):
+    def test_saida_da_coleta_leva_descartadas_do_adaptador(self):
+        r = {"vagas": [vaga()], "falhas": [],
+             "descartadas": [{"titulo": "Sr", "empresa": "Omega", "link": "https://x/o",
+                              "motivo": "nível acima do alvo (sênior)"}]}
+        out = b.saida_coleta(r)
+        self.assertEqual(set(out), {"vagas", "falhas", "descartadas"})
+        self.assertEqual(out["descartadas"], r["descartadas"])
+
+    def test_gravar_leva_descartadas_do_rebase_para_a_secao_e_ao_resumo(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            exc, res, bf = p / "exc.md", p / "res.json", p / "busca.yaml"
+            exc.write_text(EXC_OK)
+            res.write_text(json.dumps([vaga()]))
+            bf.write_text(BUSCA_OK)
+            col = p / "coletadas.json"
+            col.write_text(json.dumps({
+                "vagas": [],
+                "falhas": [],
+                "descartadas": [{"titulo": "Sr Dev", "empresa": "Omega", "link": "https://x/o",
+                                 "motivo": "nível acima do alvo (sênior)"},
+                                {"titulo": "Dev", "empresa": "Psi", "link": "https://x/p",
+                                 "motivo": "sem apply_url (candidatura no ATS)"}]}))
+            out = p / "saida"
+            r = subprocess.run([sys.executable, str(ROOT / "scripts/busca.py"), "gravar",
+                                "--resultados", str(res), "--coletadas", str(col), "--saida-dir", str(out),
+                                "--data", "2026-11-08", "--desde", "2026-11-01",
+                                "--busca", str(bf), "--excluidas", str(exc)],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            txt = (out / "2026-11-08-busca.md").read_text(encoding="utf-8")
+            secao = txt.split("# Descartadas", 1)[1]
+            self.assertIn("Sr Dev | Omega | nível acima do alvo (sênior) | https://x/o", secao)
+            self.assertIn("Dev | Psi | sem apply_url (candidatura no ATS) | https://x/p", secao)
+            self.assertIn("- nível acima do alvo: 1", txt)
+            self.assertIn("- sem apply_url: 1", txt)
+
+
 class Resumo(unittest.TestCase):
     def setUp(self):
         self.vs = [vaga(titulo="Dev Gh", empresa="Gama", link="https://x/gh1", fonte="outra:gama"),

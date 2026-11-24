@@ -158,6 +158,27 @@ class Descartes(unittest.TestCase):
                 self.assertEqual(r["descartadas"][0]["motivo"], f"nível acima do alvo ({nivel})")
 
 
+class SemMeta(unittest.TestCase):
+    """Resposta sem meta/paginas: continua enquanto a página vier cheia (50), até o teto de 10."""
+
+    def sem_meta(self, n_itens):
+        return json.dumps({"data": [job(i) for i in range(n_itens)]})
+
+    def test_pagina_cheia_sem_meta_continua_e_para_na_curta(self):
+        rede = Rede({1: self.sem_meta(50), 2: self.sem_meta(3)})
+        vagas, falhas = coletar(rede)
+        self.assertEqual(falhas, [])
+        self.assertEqual(len(rede.chamadas), 2)
+        self.assertEqual(len(vagas), 53)
+
+    def test_sem_meta_com_paginas_sempre_cheias_para_no_teto_de_10(self):
+        rede = Rede({n: self.sem_meta(50) for n in range(1, 11)})
+        vagas, falhas = coletar(rede)
+        self.assertEqual(len(rede.chamadas), 10)
+        self.assertEqual(len(vagas), 500)
+        self.assertEqual(falhas, [])
+
+
 class Erros(unittest.TestCase):
     def test_401_vira_falha_com_instrucao_e_mantem_paginas_lidas(self):
         rede = Rede({1: pagina([job(1)], 1, 3), 2: http(401)})
@@ -344,6 +365,34 @@ class Doctor(unittest.TestCase):
             (ok, msg), _ = self.checar(e)
             self.assertFalse(ok)
             self.assertNotIn(TOKEN_FAKE, msg)
+
+    def test_base_fora_do_rebase_e_loopback_e_recusada_sem_chamar_a_api(self):
+        chamadas = []
+
+        def fetch(url, headers=None):
+            chamadas.append(url)
+            return json.dumps({"data": []})
+
+        for base in ("https://evil.example.com/api/v1", "http://rebasedev.com.br/api/v1",
+                     "https://rebasedev.com.br.evil.example/api/v1"):
+            ok, msg = rb.checar_token(TOKEN_FAKE, base=base, fetch=fetch)
+            self.assertFalse(ok, base)
+            self.assertNotIn(TOKEN_FAKE, msg)
+        self.assertEqual(chamadas, [])
+
+    def test_base_loopback_e_do_rebase_sao_aceitas(self):
+        for base in ("http://127.0.0.1:8123/api/v1", "http://localhost:9/api/v1",
+                     "https://rebasedev.com.br/api/v1"):
+            self.assertTrue(rb.base_permitida(base), base)
+        self.assertFalse(rb.base_permitida("https://evil.example.com/api/v1"))
+
+    def test_mapeamento_401_403_tem_uma_fonte_so(self):
+        # Textos exigidos pela spec: falha de fonte usa "aceite de Novidades", doctor usa "sem aceite".
+        self.assertIn("aceite de Novidades ausente (403)", rb._motivo_http(http(403)))
+        (ok, msg), _ = self.checar(http(403))
+        self.assertIn("sem aceite (403)", msg)
+        self.assertIn("gere outro em", rb._motivo_http(http(401)))
+        self.assertIn("gere outro em", self.checar(http(401))[0][1])
 
     def test_mensagem_de_token_ausente_traz_instrucao(self):
         m = rb.mensagem_token_ausente()

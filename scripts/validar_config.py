@@ -96,6 +96,10 @@ def _stack_desejada(path):
     if not path.is_file():
         return out
     for n, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        inline = re.match(r"^stack_desejada:\s*\[(.*)\]\s*(#.*)?$", raw)
+        if inline:  # lista inline: stack_desejada: [Go, "Node.js"]
+            out += [(n, _strip(item)) for item in inline.group(1).split(",") if _strip(item)]
+            continue
         if re.match(r"^stack_desejada:", raw):
             dentro = True
             continue

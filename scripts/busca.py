@@ -5,7 +5,7 @@ A coleta em si é feita pelo Claude no navegador (Chromium do WSL com porta de d
 chrome-devtools, com login do usuário); este script só faz a parte determinística. Subcomandos (todos passam antes por validar_config):
   urls     imprime a data "desde" e as URLs de busca (só cargo, local, regime e janela de data)
   filtros  lista os filtros que o LinkedIn aplicou além do pedido, a partir da URL final
-  coletar  lê o Catálogo Rebase (rebase.py, token em private/rebase.env) e devolve JSON {vagas, falhas}
+  coletar  lê o Catálogo Rebase (rebase.py, token em private/rebase.env) e devolve JSON {vagas, falhas, descartadas}
   candidatos  da listagem de todas as URLs, tira os de nível acima (titulos_excluidos) e escolhe
               em rodízio quem será aberto e verificado
   gravar   lê JSON das vagas verificadas, valida o contrato, aplica as regras de processar() e grava
@@ -398,6 +398,12 @@ def resumo(vagas, descartadas=(), falhas=()):
     return "\n".join(L)
 
 
+def saida_coleta(r):
+    """JSON do 'coletar': {vagas, falhas, descartadas}. Os descartes do adaptador seguem para o 'gravar'."""
+    return {"vagas": r.get("vagas", []), "falhas": r.get("falhas", []),
+            "descartadas": r.get("descartadas", [])}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["urls", "candidatos", "filtros", "coletar", "gravar"])
@@ -444,7 +450,7 @@ def main(argv=None):
         stack = cfg.get("stack_desejada") or []
         r = rebase.coletar({"skills": rebase.traduzir_stack([stack] if isinstance(stack, str) else stack)},
                            token)
-        print(json.dumps({"vagas": r["vagas"], "falhas": r["falhas"]}, ensure_ascii=False, indent=1))
+        print(json.dumps(saida_coleta(r), ensure_ascii=False, indent=1))
         return 0
     if a.cmd == "candidatos":
         if not a.listagens or not Path(a.listagens).is_file():
@@ -468,11 +474,12 @@ def main(argv=None):
         print("--resultados é obrigatório em 'gravar'", file=sys.stderr)
         return 2
     vagas = json.loads(Path(a.resultados).read_text(encoding="utf-8"))
-    falhas = []
+    falhas, descartadas_coleta = [], []
     if a.coletadas:
         col = json.loads(Path(a.coletadas).read_text(encoding="utf-8"))
         vagas = vagas + col.get("vagas", [])
         falhas = col.get("falhas", [])
+        descartadas_coleta = col.get("descartadas", [])
     probs = validar_vagas(vagas)
     if probs:
         print("\n".join(probs), file=sys.stderr)
@@ -484,6 +491,7 @@ def main(argv=None):
     out = Path(a.saida_dir)
     out.mkdir(parents=True, exist_ok=True)
     dest = out / f"{a.data}-busca.md"
+    fora = descartadas_coleta + fora
     dest.write_text(render(final, a.data, fora, desde, falhas), encoding="utf-8")
     print(f"{len(final)} vaga(s) gravada(s) em {dest}; {len(fora)} descartada(s)")
     print(resumo(final, fora, falhas))
