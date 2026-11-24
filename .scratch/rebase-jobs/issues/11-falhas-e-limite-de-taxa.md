@@ -13,11 +13,11 @@ Fonte: `.scratch/rebase-jobs/spec.md`, seção "Erros, limite de taxa e token".
 
 **Blocked by:** 10 (Coleta do Catálogo Rebase)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] 401 e 403 viram falha de fonte com os motivos e links da spec
-- [ ] Um 429 com `Retry-After` ≤ 60 provoca uma única espera, registrada pelo `sleep` falso, e uma nova tentativa da mesma página
-- [ ] Um 429 repetido, ou com espera acima de 60 s, vira falha de fonte
-- [ ] Erro de rede, 5xx e JSON inválido viram falha de fonte, sem nova tentativa
-- [ ] As vagas das páginas lidas antes da falha são mantidas, e o motivo cita a página em que a leitura parou
-- [ ] Um teste confirma que o token não aparece em nenhum motivo, no stderr nem na saída gravada
+- [x] 401 e 403 viram falha de fonte com os motivos e links da spec
+- [x] Um 429 com `Retry-After` ≤ 60 provoca uma única espera, registrada pelo `sleep` falso, e uma nova tentativa da mesma página
+- [x] Um 429 repetido, ou com espera acima de 60 s, vira falha de fonte
+- [x] Erro de rede, 5xx e JSON inválido viram falha de fonte, sem nova tentativa
+- [x] As vagas das páginas lidas antes da falha são mantidas, e o motivo cita a página em que a leitura parou
+- [x] Um teste confirma que o token não aparece em nenhum motivo, no stderr nem na saída gravada
