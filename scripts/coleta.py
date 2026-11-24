@@ -6,8 +6,10 @@ produção é um GET público sem chave; nos testes, respostas gravadas. Só o t
 URL; a descrição completa da vaga nunca é lida nem gravada. Falha de uma fonte (timeout, 404,
 5xx, JSON inválido) vira entrada em "falhas" e a rodada segue. Pausa entre chamadas: 1 a 2 s.
 """
-import json, random, re, time, unicodedata, urllib.error, urllib.request
+import json, random, re, time, unicodedata
 from datetime import datetime, timezone
+
+from rebase import http_get, motivo_da_falha  # noqa: E402  (o adaptador do Rebase é dono de ambos)
 
 TIMEOUT = 15
 PAUSA = (1.0, 2.0)  # segundos entre uma fonte e a seguinte
@@ -33,13 +35,6 @@ PAISES_LATAM = {"mexico", "colombia", "argentina", "chile", "peru", "uruguay", "
 def _outro_pais_no_texto(texto, aceitos):
     """Algum país citado no texto de localização que não é um dos `aceitos` (já sem acento)."""
     return _tem(_sem_acento(texto), tuple(m for m in MARCAS_OUTRO_PAIS if m not in aceitos))
-
-
-def http_get(url):
-    """Fetcher de produção: GET público, sem chave e sem dado pessoal."""
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-        return r.read().decode("utf-8")
 
 
 def _sem_acento(s):
@@ -201,18 +196,6 @@ class Ashby:
 
 
 ADAPTADORES = {a.ats: a for a in (Greenhouse, Lever, Ashby)}
-
-
-def motivo_da_falha(e):
-    if isinstance(e, urllib.error.HTTPError):
-        return f"HTTP {e.code}"
-    if isinstance(e, urllib.error.URLError):
-        return "erro de rede"
-    if isinstance(e, TimeoutError):
-        return "timeout"
-    if isinstance(e, ValueError):
-        return "resposta inválida (JSON)"
-    return type(e).__name__
 
 
 def coletar(fontes, fetch=http_get, pausa=PAUSA, sleep=time.sleep):

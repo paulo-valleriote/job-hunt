@@ -22,7 +22,7 @@ Valem para toda sessão do Claude Code neste projeto. Responda e documente em pt
 4. Consultar `vagas_excluidas.md` antes de buscar ou recomendar vagas.
 5. Nunca preencher número de documento de identidade em formulários.
 6. Não enviar nada em nome do usuário sem aprovação explícita.
-7. Consultas externas (WebSearch, URLs de busca no navegador) **não** podem conter dados pessoais: só cargo, local e regime.
+7. Consultas externas (WebSearch, URLs de busca no navegador, APIs de fonte) **não** podem conter dados pessoais: só cargo, local, regime, senioridade e stack vindos do `busca.yaml`. O `minhas_skills` do Rebase (perfil guardado na conta) continua proibido.
 8. Ciclo de revisão: avaliador separado de quem escreve; nota-alvo 8.5; máximo 3 revisões; parar se não melhorar; entregar a de melhor nota.
 9. Checagem anti-invenção sempre ligada em `/curriculo`.
 10. Nada de `private/` em commits, logs compartilhados ou consultas externas.
