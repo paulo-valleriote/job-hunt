@@ -5,8 +5,7 @@ A coleta em si é feita pelo Claude no navegador (Chromium do WSL com porta de d
 chrome-devtools, com login do usuário); este script só faz a parte determinística. Subcomandos (todos passam antes por validar_config):
   urls     imprime a data "desde" e as URLs de busca (só cargo, local, regime e janela de data)
   filtros  lista os filtros que o LinkedIn aplicou além do pedido, a partir da URL final
-  coletar  lê fontes_ats.json e devolve JSON {vagas, falhas} das fontes de ATS (coleta.py) e do
-           agregador Himalayas (himalayas.py, fonte fixa, cache de 24 h em private/cache/)
+  coletar  lê o Catálogo Rebase (rebase.py, token em private/rebase.env) e devolve JSON {vagas, falhas}
   candidatos  da listagem de todas as URLs, tira os de nível acima (titulos_excluidos) e escolhe
               em rodízio quem será aberto e verificado
   gravar   lê JSON das vagas verificadas, valida o contrato, aplica as regras de processar() e grava
@@ -19,7 +18,8 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import validar_config  # noqa: E402
-import coleta  # noqa: E402
+import rebase  # noqa: E402
+import coleta  # noqa: E402  (coleta antiga: removida no ticket 15)
 import himalayas  # noqa: E402
 from fontes import ARQUIVO as FONTES_ARQUIVO, ATS as ATS_FONTES, carregar_fontes  # noqa: E402
 
@@ -157,10 +157,8 @@ def _fonte_de(v):
 
 
 def _prioridade(v):
-    """Na duplicata, fica o ATS da empresa (0); agregadores (LinkedIn, Himalayas) ficam em 1.
-    LinkedIn e Himalayas têm a mesma prioridade: na duplicata entre eles vence quem vier primeiro
-    na ordem de processar() (em gravar, as vagas do LinkedIn vêm antes das coletadas)."""
-    return 0 if _fonte_de(v) in ATS_FONTES else 1
+    """Na duplicata, fica a do Catálogo Rebase (0); o LinkedIn fica em 1 (fonte secundária)."""
+    return 0 if _fonte_de(v) == "rebase" else 1
 
 
 # Decisões (spec fontes-gratuitas-vagas, questões abertas 2 e 4): na duplicata vence o ATS da
@@ -191,7 +189,7 @@ def processar(vagas, excluidas_text, desde=None, hoje=None, remoto=False, maximo
     maximo: teto de vagas aceitas; passado o filtro das regras e a dedupe, o teto é dividido em
     rodízio entre as fontes (_rodizio); as cortadas vão para descartadas.
     titulos_excluidos: termos de nível (ex.: Staff, Principal) que descartam a vaga pelo título.
-    Dedupe (chaves: link sem query; empresa+título): na duplicata fica a de ATS (_prioridade); a
+    Dedupe (chaves: link sem query; empresa+título): na duplicata fica a do Rebase (_prioridade); a
     outra fonte vai para "fontes_secundarias" da mantida, e a descartada registra o motivo."""
     linhas = _excluidas_terms(excluidas_text)
     slot, cands, fora = {}, [], []
@@ -242,7 +240,7 @@ def processar(vagas, excluidas_text, desde=None, hoje=None, remoto=False, maximo
         chaves = [("link", lk)] if lk else []
         chaves.append(("titulo", te))
         idx = next((slot[c] for c in chaves if c in slot), None)
-        if idx is not None:  # duplicata: a de ATS fica; a outra fonte vira secundária
+        if idx is not None:  # duplicata: a de prioridade menor fica; a outra fonte vira secundária
             mantida = cands[idx]
             if _prioridade(v) < _prioridade(mantida):
                 nova = dict(v)
@@ -410,7 +408,6 @@ def resumo(vagas, descartadas=(), falhas=()):
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["urls", "candidatos", "filtros", "coletar", "gravar"])
-    ap.add_argument("--fontes", default=str(FONTES_ARQUIVO), help="lista de tokens de ATS (comando 'coletar')")
     ap.add_argument("--coletadas", help="JSON {vagas, falhas} do comando 'coletar' (comando 'gravar')")
     ap.add_argument("--busca", default=str(ROOT / "busca.yaml"))
     ap.add_argument("--excluidas", default=str(ROOT / "private/perfil/vagas_excluidas.md"))
@@ -446,8 +443,15 @@ def main(argv=None):
         print("\n".join(f"{k}={v}" for k, v in extras.items()) or "nenhum filtro extra")
         return 0
     if a.cmd == "coletar":
-        vagas, falhas = coletar_todas(carregar_fontes(a.fontes), desde=desde)
-        print(json.dumps({"vagas": vagas, "falhas": falhas}, ensure_ascii=False, indent=1))
+        token = rebase.ler_token()
+        if not token:
+            print("token do Rebase ausente: gere em https://rebasedev.com.br/jobs/perfil/agentes e grave "
+                  "TOKEN= em private/rebase.env", file=sys.stderr)
+            return 1
+        stack = cfg.get("stack_desejada") or []
+        r = rebase.coletar({"skills": rebase.traduzir_stack([stack] if isinstance(stack, str) else stack)},
+                           token)
+        print(json.dumps({"vagas": r["vagas"], "falhas": r["falhas"]}, ensure_ascii=False, indent=1))
         return 0
     if a.cmd == "candidatos":
         if not a.listagens or not Path(a.listagens).is_file():

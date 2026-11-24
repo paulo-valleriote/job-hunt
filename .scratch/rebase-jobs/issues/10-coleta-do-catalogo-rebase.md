@@ -18,18 +18,18 @@ Fonte: `.scratch/rebase-jobs/spec.md`, seções "Consulta", "Tradução vaga do 
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `busca.py coletar` chama o adaptador do Rebase e grava `{vagas, falhas}` com vagas `fonte: rebase`
-- [ ] O token é lido da linha `TOKEN=` de `private/rebase.env`
-- [ ] A stack é traduzida em slugs por normalização e apelidos (ex.: "Golang" → `go`, "Node.js" → `nodejs`)
-- [ ] A consulta leva o header Bearer, `por_pagina=50` e um `skill` repetido por slug, sem `q`, `nivel`, `modelo` nem `minhas_skills`
-- [ ] A paginação para na última página ou na 10ª, o que vier antes
-- [ ] Cada campo do registro segue a tabela da spec, incluindo `requisitos` vazio quando não há skills, `trecho` com e sem modelo e salário, e `data` vinda de `first_seen_at`
-- [ ] Vagas com `apply_url` nulo e de nível `sênior`, `staff` ou `liderança` são descartadas com motivo; vagas sem nível ficam
-- [ ] A janela `desde`, os filtros de título e `vagas_excluidas.md` valem para as vagas do Rebase
-- [ ] O Rebase tem prioridade 0 na dedupe; os testes de dedupe e rodízio que usavam greenhouse, lever ou himalayas são reescritos com `fonte="rebase"`, mantendo os comportamentos
-- [ ] `http_get` e `motivo_da_falha` moram no adaptador
-- [ ] O Guardrail 7 do `CLAUDE.md` tem a nova redação
-- [ ] O teste do adaptador usa só `fetch` e `sleep` falsos, sem rede, sem token real e sem nada de `private/`
-- [ ] `make test-busca` passa
+- [x] `busca.py coletar` chama o adaptador do Rebase e grava `{vagas, falhas}` com vagas `fonte: rebase`
+- [x] O token é lido da linha `TOKEN=` de `private/rebase.env`
+- [x] A stack é traduzida em slugs por normalização e apelidos (ex.: "Golang" → `go`, "Node.js" → `nodejs`)
+- [x] A consulta leva o header Bearer, `por_pagina=50` e um `skill` repetido por slug, sem `q`, `nivel`, `modelo` nem `minhas_skills`
+- [x] A paginação para na última página ou na 10ª, o que vier antes
+- [x] Cada campo do registro segue a tabela da spec, incluindo `requisitos` vazio quando não há skills, `trecho` com e sem modelo e salário, e `data` vinda de `first_seen_at`
+- [x] Vagas com `apply_url` nulo e de nível `sênior`, `staff` ou `liderança` são descartadas com motivo; vagas sem nível ficam
+- [x] A janela `desde`, os filtros de título e `vagas_excluidas.md` valem para as vagas do Rebase
+- [x] O Rebase tem prioridade 0 na dedupe; os testes de dedupe e rodízio que usavam greenhouse, lever ou himalayas são reescritos com `fonte="rebase"`, mantendo os comportamentos
+- [x] `http_get` e `motivo_da_falha` moram no adaptador
+- [x] O Guardrail 7 do `CLAUDE.md` tem a nova redação
+- [x] O teste do adaptador usa só `fetch` e `sleep` falsos, sem rede, sem token real e sem nada de `private/`
+- [x] `make test-busca` passa
