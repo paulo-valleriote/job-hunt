@@ -5,8 +5,7 @@ A coleta em si é feita pelo Claude no navegador (Chromium do WSL com porta de d
 chrome-devtools, com login do usuário); este script só faz a parte determinística. Subcomandos (todos passam antes por validar_config):
   urls     imprime a data "desde" e as URLs de busca (só cargo, local, regime e janela de data)
   filtros  lista os filtros que o LinkedIn aplicou além do pedido, a partir da URL final
-  coletar  lê fontes_ats.json e devolve JSON {vagas, falhas} das fontes de ATS (coleta.py) e do
-           agregador Himalayas (himalayas.py, fonte fixa, cache de 24 h em private/cache/)
+  coletar  lê o Catálogo Rebase (rebase.py, token em private/rebase.env) e devolve JSON {vagas, falhas, descartadas}
   candidatos  da listagem de todas as URLs, tira os de nível acima (titulos_excluidos) e escolhe
               em rodízio quem será aberto e verificado
   gravar   lê JSON das vagas verificadas, valida o contrato, aplica as regras de processar() e grava
@@ -19,9 +18,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import validar_config  # noqa: E402
-import coleta  # noqa: E402
-import himalayas  # noqa: E402
-from fontes import ARQUIVO as FONTES_ARQUIVO, ATS as ATS_FONTES, carregar_fontes  # noqa: E402
+import rebase  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 JANELA_PADRAO, JANELA_MAX = 7, 30
@@ -151,20 +148,18 @@ def _data(v):
 
 
 def _fonte_de(v):
-    """Fonte da vaga: "linkedin", "greenhouse", "lever", "ashby"... Vaga sem "fonte" (as antigas,
+    """Fonte da vaga: "linkedin", "rebase"... Vaga sem "fonte" (as antigas,
     do LinkedIn) conta como linkedin."""
     return _norm(v.get("fonte")).split(":", 1)[0] or "linkedin"
 
 
 def _prioridade(v):
-    """Na duplicata, fica o ATS da empresa (0); agregadores (LinkedIn, Himalayas) ficam em 1.
-    LinkedIn e Himalayas têm a mesma prioridade: na duplicata entre eles vence quem vier primeiro
-    na ordem de processar() (em gravar, as vagas do LinkedIn vêm antes das coletadas)."""
-    return 0 if _fonte_de(v) in ATS_FONTES else 1
+    """Na duplicata, fica a do Catálogo Rebase (0); o LinkedIn fica em 1 (fonte secundária)."""
+    return 0 if _fonte_de(v) == "rebase" else 1
 
 
-# Decisões (spec fontes-gratuitas-vagas, questões abertas 2 e 4): na duplicata vence o ATS da
-# empresa e o agregador fica como fonte secundária; o teto (MAX_VAGAS, 50) é dividido por fonte (rodízio).
+# Decisões (spec fontes-gratuitas-vagas, questões abertas 2 e 4): na duplicata vence a do Rebase e a
+# outra fonte fica como secundária; o teto (MAX_VAGAS, 50) é dividido por fonte (rodízio).
 def _rodizio(cands, n):
     """Índices de até n candidatas, em rodízio entre as fontes (uma de cada fonte por vez, na ordem
     de coleta). Cota por fonte = parcela igual do teto; a sobra de uma fonte vai para as outras."""
@@ -191,7 +186,7 @@ def processar(vagas, excluidas_text, desde=None, hoje=None, remoto=False, maximo
     maximo: teto de vagas aceitas; passado o filtro das regras e a dedupe, o teto é dividido em
     rodízio entre as fontes (_rodizio); as cortadas vão para descartadas.
     titulos_excluidos: termos de nível (ex.: Staff, Principal) que descartam a vaga pelo título.
-    Dedupe (chaves: link sem query; empresa+título): na duplicata fica a de ATS (_prioridade); a
+    Dedupe (chaves: link sem query; empresa+título): na duplicata fica a do Rebase (_prioridade); a
     outra fonte vai para "fontes_secundarias" da mantida, e a descartada registra o motivo."""
     linhas = _excluidas_terms(excluidas_text)
     slot, cands, fora = {}, [], []
@@ -242,7 +237,7 @@ def processar(vagas, excluidas_text, desde=None, hoje=None, remoto=False, maximo
         chaves = [("link", lk)] if lk else []
         chaves.append(("titulo", te))
         idx = next((slot[c] for c in chaves if c in slot), None)
-        if idx is not None:  # duplicata: a de ATS fica; a outra fonte vira secundária
+        if idx is not None:  # duplicata: a de prioridade menor fica; a outra fonte vira secundária
             mantida = cands[idx]
             if _prioridade(v) < _prioridade(mantida):
                 nova = dict(v)
@@ -275,6 +270,20 @@ def filtros_extras(url):
     """Filtros que o LinkedIn aplicou além do pedido (ex.: f_SAL, que pode esconder vagas)."""
     q = parse_qs(urlsplit(url).query)
     return {k: v[0] for k, v in q.items() if k not in PARAMS_ESPERADOS}
+
+
+def cortar_ja_do_rebase(itens, coletadas):
+    """Tira da listagem do LinkedIn as vagas que o Catálogo Rebase já trouxe (mesma empresa e mesmo
+    título, pela mesma normalização da dedupe de processar()); cada corte avisa no stderr."""
+    chaves = {(_norm(v.get("titulo")), _norm(v.get("empresa"))) for v in coletadas if _fonte_de(v) == "rebase"}
+    keep = []
+    for it in itens:
+        if (_norm(it.get("titulo")), _norm(it.get("empresa"))) in chaves:
+            print(f"descartada (já veio do Rebase): {it.get('titulo', '')} | {it.get('empresa', '')}",
+                  file=sys.stderr)
+        else:
+            keep.append(it)
+    return keep
 
 
 def selecionar(itens, excluidas_text, por_url=POR_URL, total=TOTAL_CANDIDATOS):
@@ -315,19 +324,13 @@ def validar_vagas(vagas):
     return probs
 
 
-def coletar_todas(fontes, fetch=coleta.http_get, sleep=time.sleep, cache=himalayas.CACHE_ARQUIVO, desde=None):
-    """Fontes de ATS e, depois, o Himalayas (janela `desde`: para a paginação fora dela). Se algum ATS
-    foi consultado, espera 1 a 2 s antes da primeira chamada do Himalayas (contadores de pausa de
-    coleta.py e himalayas.py são independentes)."""
-    vagas, falhas = coleta.coletar(fontes, fetch=fetch)
-    if any(f.get("ats") in coleta.ADAPTADORES for f in fontes):
-        sleep(random.uniform(*coleta.PAUSA))
-    hv, hf = himalayas.coletar(fetch, sleep=sleep, cache=cache, desde=desde)  # fonte fixa, sem fontes_ats.json
-    return vagas + hv, falhas + hf
-
-
 def _grupo(v):
     return "externa" if _norm(v.get("candidatura")) == "externa" else "simplificada"
+
+
+def _trecho(v):
+    """Requisitos e trecho juntos (o salário não some quando há requisitos); sem separador sobrando."""
+    return " — ".join(p for p in (v.get("requisitos"), v.get("trecho")) if p)
 
 
 def render(vagas, data, descartadas=(), desde=None, falhas=()):
@@ -343,8 +346,11 @@ def render(vagas, data, descartadas=(), desde=None, falhas=()):
         L += [f"# {titulo}", ""]
         for v in grupo:
             n += 1
+            quando = v.get("data", "")
+            if _fonte_de(v) == "rebase":
+                quando = f"entrou no Rebase em {quando}"
             L += [f"## {n}. {v.get('titulo', '')}", f"- Empresa: {v.get('empresa', '')}",
-                  f"- Local: {v.get('local', '')}", f"- Data: {v.get('data', '')}",
+                  f"- Local: {v.get('local', '')}", f"- Data: {quando}",
                   f"- Modalidade: {v.get('modalidade') or 'não verificada'} "
                   f"(aceita candidatos de: {v.get('elegibilidade') or 'não confirmado'})",
                   f"- Evidência: {v.get('evidencia') or 'não registrada'}",
@@ -354,7 +360,7 @@ def render(vagas, data, descartadas=(), desde=None, falhas=()):
             if v.get("atribuicao"):
                 L.append(f"- Atribuição: {v['atribuicao']}")
             L += [f"- Candidatura: {chave}", f"- Link: {v.get('link', '')}",
-                  f"- Trecho: {v.get('requisitos') or v.get('trecho', '')}", ""]
+                  f"- Trecho: {_trecho(v)}", ""]
     if descartadas:
         L += ["# Descartadas", ""]
         L += [f"- {d['titulo']} | {d['empresa']} | {d['motivo']} | {d['link']}" for d in descartadas]
@@ -379,31 +385,29 @@ def _contagem(linhas):
 
 def resumo(vagas, descartadas=(), falhas=()):
     """Fechamento da rodada: vagas mantidas por fonte, descartes por motivo e falhas de fontes.
-    Tokens que deram 404 vão em seção própria, para o usuário revisar fontes_ats.json.
     Só conta e relata: sem nota, ordem ou recomendação."""
     L = ["# Resumo da rodada", "", "Vagas mantidas por fonte:"]
     L += _contagem(_fonte_de(v) for v in vagas)
     L += ["", "Descartadas por motivo:"]
     L += _contagem(_motivo_chave(d["motivo"]) for d in descartadas)
     L.append("")
-    fora_404 = [x for x in falhas if x["motivo"] == "HTTP 404"]
-    outras = [x for x in falhas if x["motivo"] != "HTTP 404"]
-    if outras:
+    if falhas:
         L += ["# Fontes com falha", ""]
-        L += [f"- {x['fonte']}: {x['motivo']}" for x in outras]
-        L.append("")
-    if fora_404:
-        L += ["# Tokens com 404", "", "Revise estes tokens em fontes_ats.json (a empresa pode ter mudado de ATS):", ""]
-        L += [f"- {x['fonte']}: {x['motivo']}" for x in fora_404]
+        L += [f"- {x['fonte']}: {x['motivo']}" for x in falhas]
         L.append("")
     return "\n".join(L)
+
+
+def saida_coleta(r):
+    """JSON do 'coletar': {vagas, falhas, descartadas}. Os descartes do adaptador seguem para o 'gravar'."""
+    return {"vagas": r.get("vagas", []), "falhas": r.get("falhas", []),
+            "descartadas": r.get("descartadas", [])}
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["urls", "candidatos", "filtros", "coletar", "gravar"])
-    ap.add_argument("--fontes", default=str(FONTES_ARQUIVO), help="lista de tokens de ATS (comando 'coletar')")
-    ap.add_argument("--coletadas", help="JSON {vagas, falhas} do comando 'coletar' (comando 'gravar')")
+    ap.add_argument("--coletadas", help="JSON {vagas, falhas} do comando 'coletar' (comandos 'candidatos' e 'gravar')")
     ap.add_argument("--busca", default=str(ROOT / "busca.yaml"))
     ap.add_argument("--excluidas", default=str(ROOT / "private/perfil/vagas_excluidas.md"))
     ap.add_argument("--resultados")
@@ -438,8 +442,15 @@ def main(argv=None):
         print("\n".join(f"{k}={v}" for k, v in extras.items()) or "nenhum filtro extra")
         return 0
     if a.cmd == "coletar":
-        vagas, falhas = coletar_todas(carregar_fontes(a.fontes), desde=desde)
-        print(json.dumps({"vagas": vagas, "falhas": falhas}, ensure_ascii=False, indent=1))
+        token = rebase.ler_token()
+        if not token:
+            print("token do Rebase ausente: gere em https://rebasedev.com.br/jobs/perfil/agentes e grave "
+                  "TOKEN= em private/rebase.env", file=sys.stderr)
+            return 1
+        stack = cfg.get("stack_desejada") or []
+        r = rebase.coletar({"skills": rebase.traduzir_stack([stack] if isinstance(stack, str) else stack)},
+                           token)
+        print(json.dumps(saida_coleta(r), ensure_ascii=False, indent=1))
         return 0
     if a.cmd == "candidatos":
         if not a.listagens or not Path(a.listagens).is_file():
@@ -453,6 +464,9 @@ def main(argv=None):
                 print(f"descartada pelo título ({termo}): {it.get('titulo', '')} | {it.get('empresa', '')}",
                       file=sys.stderr)
         itens = [it for it in itens if not termo_no_titulo(it.get("titulo"), termos)]
+        if a.coletadas:  # vagas que o Rebase já trouxe não são abertas no navegador
+            col = json.loads(Path(a.coletadas).read_text(encoding="utf-8"))
+            itens = cortar_ja_do_rebase(itens, col.get("vagas", []))
         sel = selecionar(itens, Path(a.excluidas).read_text(encoding="utf-8"), a.por_url, a.total)
         print(json.dumps(sel, ensure_ascii=False, indent=1))
         return 0
@@ -460,11 +474,12 @@ def main(argv=None):
         print("--resultados é obrigatório em 'gravar'", file=sys.stderr)
         return 2
     vagas = json.loads(Path(a.resultados).read_text(encoding="utf-8"))
-    falhas = []
+    falhas, descartadas_coleta = [], []
     if a.coletadas:
         col = json.loads(Path(a.coletadas).read_text(encoding="utf-8"))
         vagas = vagas + col.get("vagas", [])
         falhas = col.get("falhas", [])
+        descartadas_coleta = col.get("descartadas", [])
     probs = validar_vagas(vagas)
     if probs:
         print("\n".join(probs), file=sys.stderr)
@@ -476,6 +491,7 @@ def main(argv=None):
     out = Path(a.saida_dir)
     out.mkdir(parents=True, exist_ok=True)
     dest = out / f"{a.data}-busca.md"
+    fora = descartadas_coleta + fora
     dest.write_text(render(final, a.data, fora, desde, falhas), encoding="utf-8")
     print(f"{len(final)} vaga(s) gravada(s) em {dest}; {len(fora)} descartada(s)")
     print(resumo(final, fora, falhas))

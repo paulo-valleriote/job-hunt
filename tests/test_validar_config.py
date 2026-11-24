@@ -24,6 +24,10 @@ idiomas_aceitos:
   - pt-BR
   - en
 """
+META_JSON = """\
+{"data": {"skills": [{"slug": "go"}, {"slug": "nodejs"}, {"slug": "python"}]}}
+"""
+SKILLS = {"go", "nodejs", "python"}
 EXC_OK = """\
 # Vagas excluídas
 - 2026-10-01 | Acme Corp | presencial em Curitiba | motivo: salário
@@ -43,6 +47,11 @@ class Gate(unittest.TestCase):
 
     def tearDown(self):
         self.t.cleanup()
+
+    def rebase_args(self, token="tok-fake-1"):
+        env = write(self.d, "rebase.env", f"TOKEN={token}\n")
+        meta = write(self.d, "meta.json", META_JSON)
+        return ["--env", str(env), "--meta-json", str(meta)]
 
     def run_validate(self, busca, exc):
         return v.validate(write(self.d, "busca.yaml", busca),
@@ -86,7 +95,7 @@ class Gate(unittest.TestCase):
         b = write(self.d, "busca.yaml", BUSCA_OK.replace("pleno", ""))
         e = write(self.d, "vagas_excluidas.md", EXC_OK)
         r = subprocess.run([sys.executable, str(ROOT / "scripts/validar_config.py"),
-                            "--busca", str(b), "--excluidas", str(e)],
+                            "--busca", str(b), "--excluidas", str(e), *self.rebase_args()],
                            capture_output=True, text=True)
         self.assertEqual(r.returncode, 1)
         self.assertIn("busca.yaml:3:", r.stderr)
@@ -95,13 +104,87 @@ class Gate(unittest.TestCase):
         b = write(self.d, "busca.yaml", BUSCA_OK)
         e = write(self.d, "vagas_excluidas.md", EXC_OK)
         r = subprocess.run([sys.executable, str(ROOT / "scripts/validar_config.py"),
-                            "--busca", str(b), "--excluidas", str(e)],
+                            "--busca", str(b), "--excluidas", str(e), *self.rebase_args()],
                            capture_output=True, text=True)
-        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_modelo_do_repo_e_recusado(self):
         probs = v.validate(ROOT / "busca.example.yaml", Path(self.d) / "x.md")
         self.assertTrue([p for p in probs if p.path.name == "busca.example.yaml"])
+
+
+class Rebase(unittest.TestCase):
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.d = self.t.name
+
+    def tearDown(self):
+        self.t.cleanup()
+
+    def test_token_ausente_falha_com_instrucao(self):
+        env = write(self.d, "rebase.env", "OUTRO=1\n")
+        probs = v.validar_rebase(write(self.d, "busca.yaml", BUSCA_OK), env, SKILLS)
+        self.assertEqual(len(probs), 1)
+        self.assertIn("https://rebasedev.com.br/jobs/perfil/agentes", probs[0].message)
+        self.assertIn("grave TOKEN= em private/rebase.env", probs[0].message)
+
+    def test_arquivo_ausente_falha(self):
+        probs = v.validar_rebase(write(self.d, "busca.yaml", BUSCA_OK),
+                                 Path(self.d) / "nao.env", SKILLS)
+        self.assertEqual(len(probs), 1)
+
+    def test_token_presente_e_stack_conhecida_passam(self):
+        env = write(self.d, "rebase.env", "TOKEN=tok-fake-1\n")
+        self.assertEqual(v.validar_rebase(write(self.d, "busca.yaml", BUSCA_OK), env, SKILLS), [])
+
+    def test_stack_desconhecida_cita_termo_e_linha(self):
+        b = write(self.d, "busca.yaml", BUSCA_OK.replace("  - Python", "  - Cobol"))
+        env = write(self.d, "rebase.env", "TOKEN=tok-fake-1\n")
+        probs = v.validar_rebase(b, env, SKILLS)
+        self.assertEqual([p.line for p in probs], [9])
+        self.assertIn("Cobol", probs[0].message)
+
+    def test_apelidos_golang_e_nodejs_passam(self):
+        b = write(self.d, "busca.yaml", BUSCA_OK.replace("  - Python", "  - Golang\n  - Node.js"))
+        env = write(self.d, "rebase.env", "TOKEN=tok-fake-1\n")
+        self.assertEqual(v.validar_rebase(b, env, SKILLS), [])
+
+    def test_lista_inline_e_validada_com_a_linha_certa(self):
+        import re
+        txt = re.sub(r"stack_desejada:\n(  - .*\n)+", "stack_desejada: [Go, Cobol]\n", BUSCA_OK)
+        self.assertIn("stack_desejada: [Go, Cobol]", txt)
+        b = write(self.d, "busca.yaml", txt)
+        env = write(self.d, "rebase.env", "TOKEN=tok-fake-1\n")
+        probs = v.validar_rebase(b, env, SKILLS)
+        self.assertEqual(len(probs), 1)
+        self.assertIn("Cobol", probs[0].message)
+        self.assertNotIn("'Go'", probs[0].message)
+        self.assertEqual(probs[0].line, txt.splitlines().index("stack_desejada: [Go, Cobol]") + 1)
+
+    def test_lista_inline_conhecida_passa(self):
+        import re
+        txt = re.sub(r"stack_desejada:\n(  - .*\n)+", "stack_desejada: [\"Golang\", Node.js]  # ok\n", BUSCA_OK)
+        b = write(self.d, "busca.yaml", txt)
+        env = write(self.d, "rebase.env", "TOKEN=tok-fake-1\n")
+        self.assertEqual(v.validar_rebase(b, env, SKILLS), [])
+
+    def test_sem_lista_do_meta_nao_valida_stack(self):
+        b = write(self.d, "busca.yaml", BUSCA_OK.replace("  - Python", "  - Cobol"))
+        env = write(self.d, "rebase.env", "TOKEN=tok-fake-1\n")
+        self.assertEqual(v.validar_rebase(b, env, None), [])
+
+    def test_cli_stack_desconhecida_falha_e_nao_imprime_token(self):
+        b = write(self.d, "busca.yaml", BUSCA_OK.replace("  - Python", "  - Cobol"))
+        e = write(self.d, "vagas_excluidas.md", EXC_OK)
+        env = write(self.d, "rebase.env", "TOKEN=tok-segredo-xyz\n")
+        meta = write(self.d, "meta.json", META_JSON)
+        r = subprocess.run([sys.executable, str(ROOT / "scripts/validar_config.py"), "--busca", str(b),
+                            "--excluidas", str(e), "--env", str(env), "--meta-json", str(meta)],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("busca.yaml:9:", r.stderr)
+        self.assertIn("Cobol", r.stderr)
+        self.assertNotIn("tok-segredo-xyz", r.stdout + r.stderr)
 
 
 if __name__ == "__main__":
