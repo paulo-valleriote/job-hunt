@@ -291,13 +291,6 @@ class Stack(unittest.TestCase):
         self.assertEqual(rb.traduzir_stack(["Golang", "Go", "AWS"]), ["go", "aws"])
 
 
-class ReusoNoModuloAntigo(unittest.TestCase):
-    def test_http_get_e_motivo_da_falha_moram_no_adaptador(self):
-        import coleta
-        self.assertIs(coleta.motivo_da_falha, rb.motivo_da_falha)
-        self.assertIs(coleta.http_get, rb.http_get)
-
-
 META_JSON = json.dumps({"data": {"skills": [{"slug": "go"}, {"slug": "nodejs"}, {"slug": "python"}]}})
 
 

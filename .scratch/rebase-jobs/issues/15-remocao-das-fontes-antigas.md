@@ -13,11 +13,11 @@ Fonte: `.scratch/rebase-jobs/spec.md`, seção "Remoção" e histórias 41–46.
 
 **Blocked by:** 10 (Coleta do Catálogo Rebase), 11 (Falhas e limite de taxa), 14 (LinkedIn pula vagas do Rebase; também edita o `busca.md`)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Os módulos de coleta de ATS, do Himalayas e de fontes, `fontes_ats.json`, `/descobrir-token` e `test_fontes` não existem mais
-- [ ] Nenhum import, docstring ou comentário restante cita Greenhouse, Lever, Ashby, Himalayas ou `fontes_ats.json`, exceto no histórico em `.scratch/`
-- [ ] `--fontes` sai do `coletar`, e o `resumo` não tem mais a seção "Tokens com 404"
-- [ ] O `settings.json` não tem mais as permissões de WebFetch dos quatro hosts removidos
-- [ ] O `busca.md` descreve a coleta por script como Rebase e não cita mais `fontes_ats.json`
-- [ ] `make test-busca`, `make test-config`, `make test-doctor` e `make test-ui` passam
+- [x] Os módulos de coleta de ATS, do Himalayas e de fontes, `fontes_ats.json`, `/descobrir-token` e `test_fontes` não existem mais
+- [x] Nenhum import, docstring ou comentário restante cita Greenhouse, Lever, Ashby, Himalayas ou `fontes_ats.json`, exceto no histórico em `.scratch/`
+- [x] `--fontes` sai do `coletar`, e o `resumo` não tem mais a seção "Tokens com 404"
+- [x] O `settings.json` não tem mais as permissões de WebFetch dos quatro hosts removidos
+- [x] O `busca.md` descreve a coleta por script como Rebase e não cita mais `fontes_ats.json`
+- [x] `make test-busca`, `make test-config`, `make test-doctor` e `make test-ui` passam
