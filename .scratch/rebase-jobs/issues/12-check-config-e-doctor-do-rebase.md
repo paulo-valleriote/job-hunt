@@ -12,11 +12,11 @@ Fonte: `.scratch/rebase-jobs/spec.md`, seção "Configuração e diagnóstico".
 
 **Blocked by:** 10 (Coleta do Catálogo Rebase: leitura do token e tradução da stack)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `make check-config` falha com a instrução da spec quando o arquivo ou a linha `TOKEN=` faltam
-- [ ] `make check-config` falha com uma mensagem clara quando uma stack não existe no `/meta`, e passa com apelidos como "Golang" e "Node.js"
-- [ ] Os testes do validador injetam a lista do `/meta`, sem rede
-- [ ] `make doctor` informa `ok`, `token recusado (401)` ou `sem aceite (403)`, com uma única chamada
-- [ ] O teste em shell do doctor usa uma API falsa que devolve 200, 401 ou 403
-- [ ] O token não aparece na saída do check-config nem na do doctor
+- [x] `make check-config` falha com a instrução da spec quando o arquivo ou a linha `TOKEN=` faltam
+- [x] `make check-config` falha com uma mensagem clara quando uma stack não existe no `/meta`, e passa com apelidos como "Golang" e "Node.js"
+- [x] Os testes do validador injetam a lista do `/meta`, sem rede
+- [x] `make doctor` informa `ok`, `token recusado (401)` ou `sem aceite (403)`, com uma única chamada
+- [x] O teste em shell do doctor usa uma API falsa que devolve 200, 401 ou 403
+- [x] O token não aparece na saída do check-config nem na do doctor

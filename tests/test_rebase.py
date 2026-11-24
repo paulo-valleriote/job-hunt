@@ -291,5 +291,65 @@ class Stack(unittest.TestCase):
         self.assertEqual(rb.traduzir_stack(["Golang", "Go", "AWS"]), ["go", "aws"])
 
 
+META_JSON = json.dumps({"data": {"skills": [{"slug": "go"}, {"slug": "nodejs"}, {"slug": "python"}]}})
+
+
+class Meta(unittest.TestCase):
+    def test_lista_skills_do_meta_sem_token(self):
+        chamadas = []
+
+        def fetch(url, headers=None):
+            chamadas.append((url, dict(headers or {})))
+            return META_JSON
+
+        self.assertEqual(rb.buscar_skills_meta(fetch=fetch), {"go", "nodejs", "python"})
+        self.assertTrue(chamadas[0][0].endswith("/api/v1/meta"))
+        self.assertNotIn("Authorization", chamadas[0][1])
+
+
+class Doctor(unittest.TestCase):
+    def checar(self, resposta):
+        chamadas = []
+
+        def fetch(url, headers=None):
+            chamadas.append((url, dict(headers or {})))
+            if isinstance(resposta, Exception):
+                raise resposta
+            return resposta
+
+        return rb.checar_token(TOKEN_FAKE, fetch=fetch), chamadas
+
+    def test_200_e_ok_com_uma_chamada_so(self):
+        (ok, msg), chamadas = self.checar(json.dumps({"data": [], "meta": {}}))
+        self.assertTrue(ok)
+        self.assertEqual(msg, "ok")
+        self.assertEqual(len(chamadas), 1)
+        url, headers = chamadas[0]
+        self.assertIn("por_pagina=1", url)
+        self.assertIn("/jobs?", url)
+        self.assertEqual(headers.get("Authorization"), f"Bearer {TOKEN_FAKE}")
+
+    def test_401_e_token_recusado(self):
+        (ok, msg), _ = self.checar(http(401))
+        self.assertFalse(ok)
+        self.assertIn("token recusado (401)", msg)
+
+    def test_403_e_sem_aceite(self):
+        (ok, msg), _ = self.checar(http(403))
+        self.assertFalse(ok)
+        self.assertIn("sem aceite (403)", msg)
+
+    def test_outras_falhas_nao_sao_ok_e_nao_mostram_token(self):
+        for e in (http(500), urllib.error.URLError("x"), ValueError("json")):
+            (ok, msg), _ = self.checar(e)
+            self.assertFalse(ok)
+            self.assertNotIn(TOKEN_FAKE, msg)
+
+    def test_mensagem_de_token_ausente_traz_instrucao(self):
+        m = rb.mensagem_token_ausente()
+        self.assertIn("https://rebasedev.com.br/jobs/perfil/agentes", m)
+        self.assertIn("grave TOKEN= em private/rebase.env", m)
+
+
 if __name__ == "__main__":
     unittest.main()

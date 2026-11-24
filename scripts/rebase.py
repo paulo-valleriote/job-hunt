@@ -194,3 +194,32 @@ def coletar(config, token, fetch=http_get, sleep=time.sleep):
             break
         pagina += 1
     return {"vagas": vagas, "falhas": falhas, "descartadas": descartadas}
+
+
+# --- Configuração e diagnóstico (check-config e doctor). Funções novas, no fim do arquivo. ---
+
+def mensagem_token_ausente():
+    """Instrução exata para quem não tem TOKEN= em private/rebase.env (check-config e doctor)."""
+    return f"gere o token em {TOKEN_URL} e grave TOKEN= em private/rebase.env"
+
+
+def buscar_skills_meta(fetch=http_get, base=BASE):
+    """Slugs de skill aceitos pela API, de GET /api/v1/meta (aberta, sem token): {data: {skills: [...]}}.
+    Aceita item como objeto com "slug" ou como texto."""
+    corpo = json.loads(fetch(f"{base}/meta", {}))
+    itens = (corpo.get("data") or {}).get("skills") or []
+    slugs = {(i.get("slug") if isinstance(i, dict) else str(i)) for i in itens}
+    return {s for s in slugs if s}
+
+
+def checar_token(token, base=BASE, fetch=http_get):
+    """Uma única chamada GET /jobs?por_pagina=1 autenticada -> (ok, texto). O token nunca entra no texto."""
+    try:
+        json.loads(fetch(f"{base}/jobs?por_pagina=1", {"Authorization": f"Bearer {token}"}))
+        return True, "ok"
+    except Exception as e:
+        if isinstance(e, urllib.error.HTTPError) and e.code == 401:
+            return False, f"token recusado (401): gere outro em {TOKEN_URL}"
+        if isinstance(e, urllib.error.HTTPError) and e.code == 403:
+            return False, f"sem aceite (403): {ACEITE_URL}"
+        return False, _motivo_http(e)

@@ -9,6 +9,9 @@ import argparse, re, sys
 from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import rebase as rb  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 REQUIRED = ["cargos_alvo", "senioridade", "regime", "paises_fuso",
             "faixa_salarial_minima", "stack_desejada", "deal_breakers",
@@ -87,12 +90,61 @@ def validate(busca, excluidas):
     return _check_busca(Path(busca)) + _check_excluidas(Path(excluidas))
 
 
+def _stack_desejada(path):
+    """[(linha, nome)] dos itens de stack_desejada; a validação contra o /meta usa os nomes."""
+    out, dentro = [], False
+    if not path.is_file():
+        return out
+    for n, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if re.match(r"^stack_desejada:", raw):
+            dentro = True
+            continue
+        if dentro and raw and not raw.startswith(" "):
+            break
+        if dentro and raw.strip().startswith("- "):
+            out.append((n, _strip(raw.strip()[2:])))
+    return out
+
+
+def validar_rebase(busca, env, skills):
+    """Token em private/rebase.env (TOKEN=) e stack_desejada traduzida contra os slugs do /meta.
+    skills=None pula a checagem de stack (sem rede). O token nunca entra na mensagem."""
+    probs = []
+    if rb.ler_token(Path(env)) is None:
+        probs.append(Problem(Path(env), 0, "token ausente: " + rb.mensagem_token_ausente()))
+    if skills is not None:
+        for n, nome in _stack_desejada(Path(busca)):
+            slugs = rb.traduzir_stack([nome])
+            slug = slugs[0] if slugs else ""
+            if slug not in skills:
+                probs.append(Problem(Path(busca), n,
+                                     f"stack desconhecida no Rebase: {nome!r} (slug {slug!r}) "
+                                     "não consta do /api/v1/meta"))
+    return probs
+
+
+def _skills(a):
+    """Slugs do /meta: de --meta-json (teste offline) ou da API. Falha vira problema, não exceção."""
+    if a.meta_json:
+        salvo = Path(a.meta_json).read_text(encoding="utf-8")
+        return rb.buscar_skills_meta(fetch=lambda url, headers=None: salvo)
+    return rb.buscar_skills_meta()
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--busca", default=str(ROOT / "busca.yaml"))
     ap.add_argument("--excluidas", default=str(ROOT / "private/perfil/vagas_excluidas.md"))
+    ap.add_argument("--env", default=str(rb.ENV_ARQUIVO))
+    ap.add_argument("--meta-json", default=None, help="resposta de /api/v1/meta salva (sem rede)")
     a = ap.parse_args(argv)
     probs = validate(a.busca, a.excluidas)
+    try:
+        skills = _skills(a)
+    except Exception as e:  # sem /meta a stack não pode ser validada: diz isso e recusa
+        skills = None
+        probs.append(Problem(Path(a.busca), 0, f"não foi possível ler /api/v1/meta ({rb.motivo_da_falha(e)})"))
+    probs += validar_rebase(a.busca, a.env, skills)
     for p in probs:
         print(p, file=sys.stderr)
     if probs:
