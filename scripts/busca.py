@@ -348,11 +348,11 @@ def render(vagas, data, descartadas=(), desde=None, falhas=()):
         L += [f"# {titulo}", ""]
         for v in grupo:
             n += 1
-            data = v.get("data", "")
+            quando = v.get("data", "")
             if _fonte_de(v) == "rebase":
-                data = f"entrou no Rebase em {data}"
+                quando = f"entrou no Rebase em {quando}"
             L += [f"## {n}. {v.get('titulo', '')}", f"- Empresa: {v.get('empresa', '')}",
-                  f"- Local: {v.get('local', '')}", f"- Data: {data}",
+                  f"- Local: {v.get('local', '')}", f"- Data: {quando}",
                   f"- Modalidade: {v.get('modalidade') or 'não verificada'} "
                   f"(aceita candidatos de: {v.get('elegibilidade') or 'não confirmado'})",
                   f"- Evidência: {v.get('evidencia') or 'não registrada'}",
