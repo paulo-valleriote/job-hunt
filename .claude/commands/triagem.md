@@ -9,7 +9,8 @@ Siga os Guardrails do `CLAUDE.md`. Passos, nesta ordem:
 1. **Gate.** Rode `python3 scripts/triagem.py check`. Se sair com erro, mostre as mensagens, diga para preencher `busca.yaml`/`vagas_excluidas.md` (ver `busca.example.yaml`) e PARE. Não faça mais nada.
 2. **Entrada.** Rode `python3 scripts/triagem.py entrada "<argumentos>"`.
    - `vazio`: peça o link ou o texto da vaga e pare.
-   - `link`: tente abrir com WebFetch. Se não abrir ou vier sem descrição útil, peça ao usuário que cole o texto da vaga e PARE. Não procure a vaga em outro site nem via WebSearch.
+   - `link` de vaga do Rebase (`Atribuição` do Rebase ou link `rebasedev.com.br/jobs/…`): leia primeiro a página markdown pública `<url>.md` com WebFetch (sem token). Se ela falhar, tente o link do ATS com WebFetch. Se os dois falharem, peça ao usuário que cole o texto da vaga e PARE. Se a página disser que a vaga foi encerrada, abra a triagem com um aviso em destaque no topo (ex.: `> **ATENÇÃO: vaga encerrada segundo o Rebase.**`) e siga normalmente, sem parar.
+   - `link` de outra origem: tente abrir com WebFetch. Se não abrir ou vier sem descrição útil, peça ao usuário que cole o texto da vaga e PARE. Não procure a vaga em outro site nem via WebSearch.
    - `texto`: use como está.
 3. **Contexto (apenas leitura).** Leia `private/perfil/profile_truth.md`, `busca.yaml` e `private/perfil/vagas_excluidas.md`. Se a vaga/empresa constar em `vagas_excluidas.md` ou bater com um `deal_breakers`, diga isso com destaque.
 4. **Prompt do upstream.** Leia `vendor/meu-emprego-novo/meu-emprego-novo-pipeline/prompts/03-triagem.md` (se faltar, avise para rodar `make setup`) e aplique-o à vaga, com os três arquivos acima.
