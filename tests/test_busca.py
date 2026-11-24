@@ -335,6 +335,28 @@ class Render(unittest.TestCase):
         self.assertIn("- Evidência: Remote - LATAM only", txt)
         self.assertIn("- Evidência: não registrada", txt)
 
+    def test_trecho_mostra_requisitos_e_trecho_juntos(self):
+        v = vaga(requisitos="Python, Django", trecho="Salário R$ 12.000")
+        txt = b.render([v], "2026-11-08", [], DESDE)
+        self.assertIn("- Trecho: Python, Django — Salário R$ 12.000", txt)
+
+    def test_trecho_so_com_o_que_existir_sem_separador_sobrando(self):
+        so_req = b.render([vaga(requisitos="Python", trecho="")], "2026-11-08", [], DESDE)
+        self.assertIn("- Trecho: Python\n", so_req)
+        so_trecho = b.render([vaga(requisitos="", trecho="Salário R$ 12.000")], "2026-11-08", [], DESDE)
+        self.assertIn("- Trecho: Salário R$ 12.000\n", so_trecho)
+        self.assertNotIn("—  ", so_trecho)
+        self.assertNotIn(" — \n", so_req + so_trecho)
+
+    def test_data_do_rebase_diz_entrou_no_rebase_em(self):
+        txt = b.render([vaga(fonte="rebase", data="2026-11-05")], "2026-11-08", [], DESDE)
+        self.assertIn("- Data: entrou no Rebase em 2026-11-05", txt)
+
+    def test_data_das_outras_fontes_continua_como_antes(self):
+        txt = b.render([vaga(fonte="ashby:acme", data="2026-11-05")], "2026-11-08", [], DESDE)
+        self.assertIn("- Data: 2026-11-05", txt)
+        self.assertNotIn("entrou no Rebase", txt)
+
 
 class Cli(unittest.TestCase):
     def setUp(self):
