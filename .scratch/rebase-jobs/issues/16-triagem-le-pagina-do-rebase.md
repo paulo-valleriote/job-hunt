@@ -9,9 +9,9 @@ Fonte: `.scratch/rebase-jobs/spec.md`, histórias 38–40 e seção "Instruçõe
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] O passo 2 do `triagem.md` define a ordem: página `.md` do Rebase, depois o link do ATS, depois o texto colado
-- [ ] Vaga encerrada gera um aviso de destaque no topo da triagem, sem interromper
-- [ ] O `settings.json` libera `WebFetch(domain:rebasedev.com.br)`
-- [ ] `scripts/triagem.py` não muda
+- [x] O passo 2 do `triagem.md` define a ordem: página `.md` do Rebase, depois o link do ATS, depois o texto colado
+- [x] Vaga encerrada gera um aviso de destaque no topo da triagem, sem interromper
+- [x] O `settings.json` libera `WebFetch(domain:rebasedev.com.br)`
+- [x] `scripts/triagem.py` não muda
