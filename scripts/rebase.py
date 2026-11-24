@@ -88,14 +88,22 @@ def motivo_da_falha(e):
     return type(e).__name__
 
 
-def _motivo_http(e):
+def _mapear_http(e, doctor=False):
+    """Única fonte dos textos de 401/403. Falha de fonte e doctor usam o mesmo 401; o 403 tem texto próprio."""
     if isinstance(e, urllib.error.HTTPError):
         if e.code == 401:
             return f"token recusado (401): gere outro em {TOKEN_URL}"
         if e.code == 403:
-            return f"aceite de Novidades ausente (403): {ACEITE_URL}"
-        if e.code == 429:
-            return "limite de taxa (429)"
+            return f"sem aceite (403): {ACEITE_URL}" if doctor else f"aceite de Novidades ausente (403): {ACEITE_URL}"
+    return None
+
+
+def _motivo_http(e):
+    m = _mapear_http(e)
+    if m:
+        return m
+    if isinstance(e, urllib.error.HTTPError) and e.code == 429:
+        return "limite de taxa (429)"
     return motivo_da_falha(e)
 
 
@@ -126,7 +134,7 @@ def _nivel_descartado(nivel):
     return _sem_acento(nivel).strip() in NIVEIS_DESCARTADOS
 
 
-def _trecho(j):
+def _trecho_modelo_salario(j):
     partes = []
     modelos = [MODELOS.get(str(m).lower(), str(m)) for m in (j.get("hiring_models") or [])]
     if modelos:
@@ -157,7 +165,7 @@ def _traduzir(j):
         "evidencia": f"Rebase: contrata quem mora no Brasil ({local or 'não informada'})",
         "data": (j.get("first_seen_at") or "")[:10],
         "requisitos": ("Requer: " + ", ".join(reqs)) if reqs else "",
-        "trecho": _trecho(j), "status": "aberta", "candidatura": "externa", "fonte": "rebase",
+        "trecho": _trecho_modelo_salario(j), "status": "aberta", "candidatura": "externa", "fonte": "rebase",
     }, None
 
 
@@ -179,7 +187,10 @@ def coletar(config, token, fetch=http_get, sleep=time.sleep):
             if not isinstance(itens, list):
                 raise ValueError("data sem lista")
             meta = corpo.get("meta") or {}
-            ultima = not itens or int(meta.get("pagina", pagina)) >= int(meta.get("paginas", pagina))
+            if "paginas" in meta:
+                ultima = not itens or int(meta.get("pagina", pagina)) >= int(meta["paginas"])
+            else:  # sem meta: página cheia pode ter continuação; a curta encerra
+                ultima = len(itens) < POR_PAGINA
             traduzidas = [_traduzir(j) for j in itens]
         except Exception as e:  # uma falha de fonte não derruba a rodada
             falhas.append({"fonte": "rebase",
@@ -212,14 +223,21 @@ def buscar_skills_meta(fetch=http_get, base=BASE):
     return {s for s in slugs if s}
 
 
+def base_permitida(base):
+    """O token só vai para https://rebasedev.com.br/... ou para loopback (127.0.0.1/localhost, teste)."""
+    u = urllib.parse.urlsplit(base or "")
+    if u.scheme == "https" and u.hostname == "rebasedev.com.br":
+        return True
+    return u.scheme == "http" and u.hostname in ("127.0.0.1", "localhost")
+
+
 def checar_token(token, base=BASE, fetch=http_get):
-    """Uma única chamada GET /jobs?por_pagina=1 autenticada -> (ok, texto). O token nunca entra no texto."""
+    """Uma única chamada GET /jobs?por_pagina=1 autenticada -> (ok, texto). O token nunca entra no texto.
+    Base não permitida: recusa sem chamar a API."""
+    if not base_permitida(base):
+        return False, "base da API não permitida (use https://rebasedev.com.br/api/v1)"
     try:
         json.loads(fetch(f"{base}/jobs?por_pagina=1", {"Authorization": f"Bearer {token}"}))
         return True, "ok"
     except Exception as e:
-        if isinstance(e, urllib.error.HTTPError) and e.code == 401:
-            return False, f"token recusado (401): gere outro em {TOKEN_URL}"
-        if isinstance(e, urllib.error.HTTPError) and e.code == 403:
-            return False, f"sem aceite (403): {ACEITE_URL}"
-        return False, _motivo_http(e)
+        return False, _mapear_http(e, doctor=True) or _motivo_http(e)

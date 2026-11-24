@@ -107,6 +107,13 @@ OUT="$(doctor)"; RC=$?
 check "200 vira ok" bash -c "grep -q 'ok .*Rebase' <<<'$OUT' && test $RC -eq 0"
 check "200: uma única chamada a /jobs?por_pagina=1" bash -c "test \"\$(wc -l < '$LOG')\" -eq 1 && grep -q 'jobs?por_pagina=1' '$LOG'"
 check "token nunca aparece na saída do doctor" bash -c "! grep -q 'tok-200' <<<'$OUT'"
+# Cenário 6: base da API fora de rebasedev.com.br e loopback é recusada, sem chamada e sem token na saída
+echo "TOKEN=tok-200" > "$PROJ/private/rebase.env"; : > "$LOG"
+OUT="$(JOBHUNT_REBASE_API="https://evil.example.com/api/v1" doctor)"; RC=$?
+check "base estranha: falha com 'base da API não permitida'" bash -c "grep -q 'base da API não permitida' <<<'$OUT' && test $RC -ne 0"
+check "base estranha: token nunca aparece na saída" bash -c "! grep -q 'tok-200' <<<'$OUT'"
+check "base estranha: nenhuma chamada à API local" test "$(wc -l < "$LOG")" -eq 0
+
 kill $API 2>/dev/null
 unset JOBHUNT_REBASE_API
 

@@ -149,6 +149,25 @@ class Rebase(unittest.TestCase):
         env = write(self.d, "rebase.env", "TOKEN=tok-fake-1\n")
         self.assertEqual(v.validar_rebase(b, env, SKILLS), [])
 
+    def test_lista_inline_e_validada_com_a_linha_certa(self):
+        import re
+        txt = re.sub(r"stack_desejada:\n(  - .*\n)+", "stack_desejada: [Go, Cobol]\n", BUSCA_OK)
+        self.assertIn("stack_desejada: [Go, Cobol]", txt)
+        b = write(self.d, "busca.yaml", txt)
+        env = write(self.d, "rebase.env", "TOKEN=tok-fake-1\n")
+        probs = v.validar_rebase(b, env, SKILLS)
+        self.assertEqual(len(probs), 1)
+        self.assertIn("Cobol", probs[0].message)
+        self.assertNotIn("'Go'", probs[0].message)
+        self.assertEqual(probs[0].line, txt.splitlines().index("stack_desejada: [Go, Cobol]") + 1)
+
+    def test_lista_inline_conhecida_passa(self):
+        import re
+        txt = re.sub(r"stack_desejada:\n(  - .*\n)+", "stack_desejada: [\"Golang\", Node.js]  # ok\n", BUSCA_OK)
+        b = write(self.d, "busca.yaml", txt)
+        env = write(self.d, "rebase.env", "TOKEN=tok-fake-1\n")
+        self.assertEqual(v.validar_rebase(b, env, SKILLS), [])
+
     def test_sem_lista_do_meta_nao_valida_stack(self):
         b = write(self.d, "busca.yaml", BUSCA_OK.replace("  - Python", "  - Cobol"))
         env = write(self.d, "rebase.env", "TOKEN=tok-fake-1\n")
