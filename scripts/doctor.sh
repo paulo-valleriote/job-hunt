@@ -56,5 +56,9 @@ else warn ".mcp.json sem o servidor chrome-devtools (o /busca não alcança o na
 if curl -fs -m 2 "http://127.0.0.1:$PORTA/json/version" >/dev/null 2>&1; then good "navegador de pé em 127.0.0.1:$PORTA"
 else warn "navegador fechado (127.0.0.1:$PORTA sem resposta)"; hint "rode: make navegador"; fi
 
+# Catálogo Rebase: arquivo/TOKEN e uma única chamada à API (a URL é trocável só para o teste).
+REBASE_API="${JOBHUNT_REBASE_API:-https://rebasedev.com.br/api/v1}"
+if python3 scripts/doctor_rebase.py --base "$REBASE_API"; then :; else BAD=1; hint "rode: make check-config (depois de gravar TOKEN=)"; fi
+
 [ $BAD -eq 0 ] && echo "Ambiente pronto." || echo "Ambiente NÃO está pronto."
 exit $BAD
