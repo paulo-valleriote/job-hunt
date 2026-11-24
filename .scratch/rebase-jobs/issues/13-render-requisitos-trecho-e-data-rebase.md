@@ -6,10 +6,10 @@ Fonte: `.scratch/rebase-jobs/spec.md`, seção "Mudanças no `busca.py`", item `
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Uma vaga com requisitos e trecho mostra os dois na linha `- Trecho:`
-- [ ] Uma vaga só com requisitos, ou só com trecho, mostra o que tiver, sem separador sobrando
-- [ ] `- Data:` diz "entrou no Rebase em" nas vagas `fonte: rebase` e fica como hoje nas outras
-- [ ] Os testes da `ui/` (`make test-ui`) continuam passando sem mudança na `ui/`
-- [ ] Há casos novos na classe `Render` dos testes do `busca`
+- [x] Uma vaga com requisitos e trecho mostra os dois na linha `- Trecho:`
+- [x] Uma vaga só com requisitos, ou só com trecho, mostra o que tiver, sem separador sobrando
+- [x] `- Data:` diz "entrou no Rebase em" nas vagas `fonte: rebase` e fica como hoje nas outras
+- [x] Os testes da `ui/` (`make test-ui`) continuam passando sem mudança na `ui/`
+- [x] Há casos novos na classe `Render` dos testes do `busca`

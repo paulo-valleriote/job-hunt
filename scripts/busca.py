@@ -330,6 +330,11 @@ def _grupo(v):
     return "externa" if _norm(v.get("candidatura")) == "externa" else "simplificada"
 
 
+def _trecho(v):
+    """Requisitos e trecho juntos (o salário não some quando há requisitos); sem separador sobrando."""
+    return " — ".join(p for p in (v.get("requisitos"), v.get("trecho")) if p)
+
+
 def render(vagas, data, descartadas=(), desde=None, falhas=()):
     cab = f"{len(vagas)} vaga(s), sem classificação"
     if desde:
@@ -343,8 +348,11 @@ def render(vagas, data, descartadas=(), desde=None, falhas=()):
         L += [f"# {titulo}", ""]
         for v in grupo:
             n += 1
+            data = v.get("data", "")
+            if _fonte_de(v) == "rebase":
+                data = f"entrou no Rebase em {data}"
             L += [f"## {n}. {v.get('titulo', '')}", f"- Empresa: {v.get('empresa', '')}",
-                  f"- Local: {v.get('local', '')}", f"- Data: {v.get('data', '')}",
+                  f"- Local: {v.get('local', '')}", f"- Data: {data}",
                   f"- Modalidade: {v.get('modalidade') or 'não verificada'} "
                   f"(aceita candidatos de: {v.get('elegibilidade') or 'não confirmado'})",
                   f"- Evidência: {v.get('evidencia') or 'não registrada'}",
@@ -354,7 +362,7 @@ def render(vagas, data, descartadas=(), desde=None, falhas=()):
             if v.get("atribuicao"):
                 L.append(f"- Atribuição: {v['atribuicao']}")
             L += [f"- Candidatura: {chave}", f"- Link: {v.get('link', '')}",
-                  f"- Trecho: {v.get('requisitos') or v.get('trecho', '')}", ""]
+                  f"- Trecho: {_trecho(v)}", ""]
     if descartadas:
         L += ["# Descartadas", ""]
         L += [f"- {d['titulo']} | {d['empresa']} | {d['motivo']} | {d['link']}" for d in descartadas]
