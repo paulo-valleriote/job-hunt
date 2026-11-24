@@ -19,9 +19,6 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import validar_config  # noqa: E402
 import rebase  # noqa: E402
-import coleta  # noqa: E402  (coleta antiga: removida no ticket 15)
-import himalayas  # noqa: E402
-from fontes import ARQUIVO as FONTES_ARQUIVO, ATS as ATS_FONTES, carregar_fontes  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 JANELA_PADRAO, JANELA_MAX = 7, 30
@@ -151,7 +148,7 @@ def _data(v):
 
 
 def _fonte_de(v):
-    """Fonte da vaga: "linkedin", "greenhouse", "lever", "ashby"... Vaga sem "fonte" (as antigas,
+    """Fonte da vaga: "linkedin", "rebase"... Vaga sem "fonte" (as antigas,
     do LinkedIn) conta como linkedin."""
     return _norm(v.get("fonte")).split(":", 1)[0] or "linkedin"
 
@@ -161,8 +158,8 @@ def _prioridade(v):
     return 0 if _fonte_de(v) == "rebase" else 1
 
 
-# Decisões (spec fontes-gratuitas-vagas, questões abertas 2 e 4): na duplicata vence o ATS da
-# empresa e o agregador fica como fonte secundária; o teto (MAX_VAGAS, 50) é dividido por fonte (rodízio).
+# Decisões (spec fontes-gratuitas-vagas, questões abertas 2 e 4): na duplicata vence a do Rebase e a
+# outra fonte fica como secundária; o teto (MAX_VAGAS, 50) é dividido por fonte (rodízio).
 def _rodizio(cands, n):
     """Índices de até n candidatas, em rodízio entre as fontes (uma de cada fonte por vez, na ordem
     de coleta). Cota por fonte = parcela igual do teto; a sobra de uma fonte vai para as outras."""
@@ -327,17 +324,6 @@ def validar_vagas(vagas):
     return probs
 
 
-def coletar_todas(fontes, fetch=coleta.http_get, sleep=time.sleep, cache=himalayas.CACHE_ARQUIVO, desde=None):
-    """Fontes de ATS e, depois, o Himalayas (janela `desde`: para a paginação fora dela). Se algum ATS
-    foi consultado, espera 1 a 2 s antes da primeira chamada do Himalayas (contadores de pausa de
-    coleta.py e himalayas.py são independentes)."""
-    vagas, falhas = coleta.coletar(fontes, fetch=fetch)
-    if any(f.get("ats") in coleta.ADAPTADORES for f in fontes):
-        sleep(random.uniform(*coleta.PAUSA))
-    hv, hf = himalayas.coletar(fetch, sleep=sleep, cache=cache, desde=desde)  # fonte fixa, sem fontes_ats.json
-    return vagas + hv, falhas + hf
-
-
 def _grupo(v):
     return "externa" if _norm(v.get("candidatura")) == "externa" else "simplificada"
 
@@ -399,22 +385,15 @@ def _contagem(linhas):
 
 def resumo(vagas, descartadas=(), falhas=()):
     """Fechamento da rodada: vagas mantidas por fonte, descartes por motivo e falhas de fontes.
-    Tokens que deram 404 vão em seção própria, para o usuário revisar fontes_ats.json.
     Só conta e relata: sem nota, ordem ou recomendação."""
     L = ["# Resumo da rodada", "", "Vagas mantidas por fonte:"]
     L += _contagem(_fonte_de(v) for v in vagas)
     L += ["", "Descartadas por motivo:"]
     L += _contagem(_motivo_chave(d["motivo"]) for d in descartadas)
     L.append("")
-    fora_404 = [x for x in falhas if x["motivo"] == "HTTP 404"]
-    outras = [x for x in falhas if x["motivo"] != "HTTP 404"]
-    if outras:
+    if falhas:
         L += ["# Fontes com falha", ""]
-        L += [f"- {x['fonte']}: {x['motivo']}" for x in outras]
-        L.append("")
-    if fora_404:
-        L += ["# Tokens com 404", "", "Revise estes tokens em fontes_ats.json (a empresa pode ter mudado de ATS):", ""]
-        L += [f"- {x['fonte']}: {x['motivo']}" for x in fora_404]
+        L += [f"- {x['fonte']}: {x['motivo']}" for x in falhas]
         L.append("")
     return "\n".join(L)
 

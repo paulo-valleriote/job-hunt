@@ -6,7 +6,7 @@ Interface pública:
       e lança HTTPError para status de erro; sleep(s) espera. Lê até 10 páginas (ou até a última).
   ler_token(arquivo) -> str | None   (linha TOKEN= de private/rebase.env)
   traduzir_stack(lista) -> [slugs]   (normalização sem caixa, acento e pontuação, mais apelidos)
-  http_get(url, headers) e motivo_da_falha(e): também usados pela coleta antiga (coleta.py).
+  http_get(url, headers) e motivo_da_falha(e): HTTP e motivos de falha do adaptador.
 
 Só leitura. O token nunca entra em motivo, log ou saída. Vagas com apply_url nulo e de nível acima
 do alvo (sênior, staff, liderança) saem em "descartadas" com motivo; os filtros de janela, título e
