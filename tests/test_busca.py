@@ -480,6 +480,39 @@ class Cli(unittest.TestCase):
         r = self.run_cli("candidatos", "--listagens", str(lst))  # sem o campo: nada muda
         self.assertEqual(len(json.loads(r.stdout)), 4)
 
+    def test_candidatos_coletadas_corta_o_que_o_rebase_ja_trouxe(self):
+        itens = [{"origem": "A", "id": "1", "titulo": "Backend Engineer", "empresa": "Zeta Labs"},
+                 {"origem": "A", "id": "2", "titulo": "  backend   ENGINEER ", "empresa": "ZETA LABS "},
+                 {"origem": "B", "id": "3", "titulo": "Backend Engineer", "empresa": "Outra SA"},
+                 {"origem": "B", "id": "4", "titulo": "Dev Pleno", "empresa": "Zeta Labs"}]
+        lst = self.p / "lst.json"
+        lst.write_text(json.dumps(itens))
+        col = self.p / "col.json"
+        col.write_text(json.dumps({"vagas": [vaga(titulo="Backend Engineer", empresa="Zeta Labs", fonte="rebase")],
+                                   "falhas": []}))
+        r = self.run_cli("candidatos", "--listagens", str(lst), "--coletadas", str(col))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([i["id"] for i in json.loads(r.stdout)], ["3", "4"])
+        self.assertEqual(r.stderr.count("já veio do Rebase"), 2)
+        self.assertIn("Backend Engineer | Zeta Labs", r.stderr)
+
+    def test_candidatos_sem_coletadas_nao_corta_nada(self):
+        itens = [{"origem": "A", "id": "1", "titulo": "Backend Engineer", "empresa": "Zeta Labs"}]
+        lst = self.p / "lst.json"
+        lst.write_text(json.dumps(itens))
+        r = self.run_cli("candidatos", "--listagens", str(lst))
+        self.assertEqual(len(json.loads(r.stdout)), 1)
+        self.assertNotIn("já veio do Rebase", r.stderr)
+
+    def test_candidatos_coletadas_sem_vagas_do_rebase_nao_corta(self):
+        itens = [{"origem": "A", "id": "1", "titulo": "Backend Engineer", "empresa": "Zeta Labs"}]
+        lst = self.p / "lst.json"
+        lst.write_text(json.dumps(itens))
+        col = self.p / "col.json"
+        col.write_text(json.dumps({"vagas": [], "falhas": [{"fonte": "rebase", "motivo": "401"}]}))
+        r = self.run_cli("candidatos", "--listagens", str(lst), "--coletadas", str(col))
+        self.assertEqual(len(json.loads(r.stdout)), 1)
+
     def test_gravar_lista_a_vaga_de_nivel_acima_em_descartadas(self):
         self.res.write_text(json.dumps([vaga("Staff Engineer", link="https://x/1"),
                                         vaga("Senior Engineer", link="https://x/2")]))

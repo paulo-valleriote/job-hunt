@@ -9,10 +9,10 @@ Fonte: `.scratch/rebase-jobs/spec.md`, histórias 23–28 e seção "Mudanças n
 
 **Blocked by:** 10 (Coleta do Catálogo Rebase)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `candidatos --coletadas` remove as vagas do LinkedIn que casam por empresa e título com uma vaga do Rebase, e avisa "já veio do Rebase" no stderr
-- [ ] Sem `--coletadas`, o `candidatos` se comporta como hoje
-- [ ] Na duplicata entre Rebase e LinkedIn em `processar()`, fica a do Rebase e o LinkedIn vira fonte secundária
-- [ ] O `busca.md` coleta o Rebase antes do LinkedIn, passa `--coletadas` no passo 6 e relata os cortes no fechamento
-- [ ] Há testes novos do `candidatos --coletadas`, pela CLI por subprocess
+- [x] `candidatos --coletadas` remove as vagas do LinkedIn que casam por empresa e título com uma vaga do Rebase, e avisa "já veio do Rebase" no stderr
+- [x] Sem `--coletadas`, o `candidatos` se comporta como hoje
+- [x] Na duplicata entre Rebase e LinkedIn em `processar()`, fica a do Rebase e o LinkedIn vira fonte secundária
+- [x] O `busca.md` coleta o Rebase antes do LinkedIn, passa `--coletadas` no passo 6 e relata os cortes no fechamento
+- [x] Há testes novos do `candidatos --coletadas`, pela CLI por subprocess

@@ -275,6 +275,20 @@ def filtros_extras(url):
     return {k: v[0] for k, v in q.items() if k not in PARAMS_ESPERADOS}
 
 
+def cortar_ja_do_rebase(itens, coletadas):
+    """Tira da listagem do LinkedIn as vagas que o Catálogo Rebase já trouxe (mesma empresa e mesmo
+    título, pela mesma normalização da dedupe de processar()); cada corte avisa no stderr."""
+    chaves = {(_norm(v.get("titulo")), _norm(v.get("empresa"))) for v in coletadas if _fonte_de(v) == "rebase"}
+    keep = []
+    for it in itens:
+        if (_norm(it.get("titulo")), _norm(it.get("empresa"))) in chaves:
+            print(f"descartada (já veio do Rebase): {it.get('titulo', '')} | {it.get('empresa', '')}",
+                  file=sys.stderr)
+        else:
+            keep.append(it)
+    return keep
+
+
 def selecionar(itens, excluidas_text, por_url=POR_URL, total=TOTAL_CANDIDATOS):
     """Da listagem de todas as URLs ({origem, id, titulo, empresa, ...}, na ordem lida) ao que será
     aberto e verificado: em rodízio entre as URLs (nenhuma domina), no máximo por_url por URL e
@@ -408,7 +422,7 @@ def resumo(vagas, descartadas=(), falhas=()):
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["urls", "candidatos", "filtros", "coletar", "gravar"])
-    ap.add_argument("--coletadas", help="JSON {vagas, falhas} do comando 'coletar' (comando 'gravar')")
+    ap.add_argument("--coletadas", help="JSON {vagas, falhas} do comando 'coletar' (comandos 'candidatos' e 'gravar')")
     ap.add_argument("--busca", default=str(ROOT / "busca.yaml"))
     ap.add_argument("--excluidas", default=str(ROOT / "private/perfil/vagas_excluidas.md"))
     ap.add_argument("--resultados")
@@ -465,6 +479,9 @@ def main(argv=None):
                 print(f"descartada pelo título ({termo}): {it.get('titulo', '')} | {it.get('empresa', '')}",
                       file=sys.stderr)
         itens = [it for it in itens if not termo_no_titulo(it.get("titulo"), termos)]
+        if a.coletadas:  # vagas que o Rebase já trouxe não são abertas no navegador
+            col = json.loads(Path(a.coletadas).read_text(encoding="utf-8"))
+            itens = cortar_ja_do_rebase(itens, col.get("vagas", []))
         sel = selecionar(itens, Path(a.excluidas).read_text(encoding="utf-8"), a.por_url, a.total)
         print(json.dumps(sel, ensure_ascii=False, indent=1))
         return 0
